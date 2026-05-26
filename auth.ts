@@ -145,5 +145,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
+  events: {
+    async signIn({ user, account }) {
+      const userId = user?.id
+      if (!userId || typeof userId !== 'string') return
+      try {
+        const { eq } = await import('drizzle-orm')
+        const { db, users } = await import('@/lib/db')
+        const { logUserLogin } = await import('@/lib/system-activity-log')
+        const now = new Date()
+        await db
+          .update(users)
+          .set({ lastLoginAt: now, lastActiveAt: now })
+          .where(eq(users.id, userId))
+        await logUserLogin({
+          userId,
+          role: (user as { role?: string }).role,
+          email: user.email ?? null,
+          provider: account?.provider ?? 'credentials',
+        })
+      } catch (err) {
+        console.error('[auth] signIn activity log failed:', err)
+      }
+    },
+  },
   trustHost: true,
 })

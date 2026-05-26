@@ -5,6 +5,27 @@ import { auth } from '@/auth'
 import { canAccessAutomationRules } from '@/lib/auth-utils'
 import { db } from '@/lib/db'
 import { automationRules } from '@/lib/db'
+import { logSettingsCreated } from '@/lib/settings-activity-log'
+
+function ruleSnapshot(r: {
+  name: string | null
+  eventType: string
+  conditions: unknown
+  actions: unknown
+  priority: number | null
+  companyId: string | null
+  status: boolean | null
+}) {
+  return {
+    name: r.name,
+    event_type: r.eventType,
+    conditions: r.conditions,
+    actions: r.actions,
+    priority: r.priority ?? 0,
+    company_id: r.companyId,
+    status: r.status ?? true,
+  }
+}
 
 /** GET /api/automation-rules - List all rules (by priority desc) */
 export async function GET() {
@@ -75,6 +96,14 @@ export async function POST(request: Request) {
   if (!inserted) {
     return NextResponse.json({ error: 'Insert failed' }, { status: 500 })
   }
+
+  await logSettingsCreated({
+    session,
+    entityType: 'automation_rule',
+    entityId: String(inserted.id),
+    label: inserted.name ?? `Rule #${inserted.id}`,
+    snapshot: ruleSnapshot(inserted),
+  })
 
   return NextResponse.json({
     id: inserted.id,

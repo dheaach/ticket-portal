@@ -5,6 +5,9 @@ import { auth } from '@/auth'
 import { isAdmin } from '@/lib/auth-utils'
 import { db, jobTypes, ticketTimeTracker } from '@/lib/db'
 import { normalizeJobTypeTitle, parseJobTypeSortOrder } from '@/lib/job-types-admin'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
+
+const JOB_TYPE_LOG_KEYS = ['title', 'sort_order', 'is_active']
 
 function assertAdmin(role: string | undefined) {
   if (!isAdmin(role)) {
@@ -84,6 +87,21 @@ export async function PATCH(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
+  const snap = (r: typeof existing) => ({
+    title: r.title,
+    sort_order: r.sortOrder,
+    is_active: r.isActive,
+  })
+  await logSettingsUpdated({
+    session,
+    entityType: 'job_type',
+    entityId: slug,
+    label: updated.title,
+    before: snap(existing),
+    after: snap(updated),
+    keys: JOB_TYPE_LOG_KEYS,
+  })
+
   return NextResponse.json(serializeRow(updated))
 }
 
@@ -122,6 +140,13 @@ export async function DELETE(
         .set({ jobType: 'other' })
         .where(eq(ticketTimeTracker.jobType, slug))
       await tx.delete(jobTypes).where(eq(jobTypes.slug, slug))
+    })
+    await logSettingsDeleted({
+      session,
+      entityType: 'job_type',
+      entityId: slug,
+      label: exists.title,
+      snapshot: serializeRow(exists),
     })
     return NextResponse.json({ ok: true })
   } catch (e) {

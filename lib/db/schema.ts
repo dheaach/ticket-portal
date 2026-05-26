@@ -310,6 +310,26 @@ export const ticketActivityLog = pgTable(
   (t) => [index('ticket_activity_log_ticket_id_created_at_idx').on(t.ticketId, t.createdAt)]
 )
 
+/** Append-only audit: users, auth, settings catalog edits (tags, statuses, types, etc.). */
+export const systemActivityLog = pgTable(
+  'system_activity_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    actorRole: varchar('actor_role', { length: 32 }).notNull().default('agent'),
+    category: varchar('category', { length: 32 }).notNull(),
+    action: varchar('action', { length: 64 }).notNull(),
+    entityType: varchar('entity_type', { length: 64 }),
+    entityId: varchar('entity_id', { length: 255 }),
+    metadata: jsonb('metadata'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('system_activity_log_category_created_at_idx').on(t.category, t.createdAt),
+    index('system_activity_log_entity_created_at_idx').on(t.entityType, t.entityId, t.createdAt),
+  ]
+)
+
 export const ticketAttributs = pgTable(
   'ticket_attributs',
   {

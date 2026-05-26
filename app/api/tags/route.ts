@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { tags } from '@/lib/db'
+import { logSettingsCreated } from '@/lib/settings-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 
 /** GET /api/tags - List all tags */
@@ -53,6 +54,14 @@ export async function POST(request: Request) {
   if (!inserted) {
     return NextResponse.json({ error: 'Insert failed' }, { status: 500 })
   }
+
+  await logSettingsCreated({
+    session,
+    entityType: 'tag',
+    entityId: inserted.id,
+    label: inserted.name,
+    snapshot: { name: inserted.name, slug: inserted.slug, color: inserted.color ?? '#000000' },
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({

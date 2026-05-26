@@ -9,6 +9,7 @@ import {
   normalizeJobTypeTitle,
   parseJobTypeSortOrder,
 } from '@/lib/job-types-admin'
+import { logSettingsCreated } from '@/lib/settings-activity-log'
 
 function assertAdmin(role: string | undefined) {
   if (!isAdmin(role)) {
@@ -94,6 +95,14 @@ export async function POST(request: Request) {
         isActive,
       })
       .returning()
+
+    await logSettingsCreated({
+      session,
+      entityType: 'job_type',
+      entityId: row.slug,
+      label: row.title,
+      snapshot: serializeRow(row),
+    })
 
     return NextResponse.json(serializeRow(row))
   } catch (e: unknown) {

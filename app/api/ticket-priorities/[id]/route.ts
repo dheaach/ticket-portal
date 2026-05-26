@@ -4,7 +4,10 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { ticketPriorities } from '@/lib/db'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+
+const PRIORITY_LOG_KEYS = ['title', 'slug', 'color', 'sort_order', 'description']
 
 /** PATCH /api/ticket-priorities/[id] */
 export async function PATCH(
@@ -36,6 +39,11 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  const [current] = await db.select().from(ticketPriorities).where(eq(ticketPriorities.id, priorityId)).limit(1)
+  if (!current) {
+    return NextResponse.json({ error: 'Priority not found' }, { status: 404 })
+  }
+
   const [updated] = await db
     .update(ticketPriorities)
     .set(values as typeof ticketPriorities.$inferInsert)
@@ -45,6 +53,23 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ error: 'Priority not found' }, { status: 404 })
   }
+
+  const snap = (r: typeof current) => ({
+    title: r.title,
+    slug: r.slug,
+    color: r.color ?? '#000000',
+    sort_order: r.sortOrder ?? 0,
+    description: r.description ?? '',
+  })
+  await logSettingsUpdated({
+    session,
+    entityType: 'ticket_priority',
+    entityId: String(priorityId),
+    label: updated.title,
+    before: snap(current),
+    after: snap(updated),
+    keys: PRIORITY_LOG_KEYS,
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({
@@ -76,6 +101,11 @@ export async function DELETE(
   }
 
   try {
+    const [current] = await db.select().from(ticketPriorities).where(eq(ticketPriorities.id, priorityId)).limit(1)
+    if (!current) {
+      return NextResponse.json({ error: 'Priority not found' }, { status: 404 })
+    }
+
     const [deleted] = await db
       .delete(ticketPriorities)
       .where(eq(ticketPriorities.id, priorityId))
@@ -84,6 +114,20 @@ export async function DELETE(
     if (!deleted) {
       return NextResponse.json({ error: 'Priority not found' }, { status: 404 })
     }
+
+    await logSettingsDeleted({
+      session,
+      entityType: 'ticket_priority',
+      entityId: String(priorityId),
+      label: current.title,
+      snapshot: {
+        title: current.title,
+        slug: current.slug,
+        color: current.color ?? '#000000',
+        sort_order: current.sortOrder ?? 0,
+        description: current.description ?? '',
+      },
+    })
 
     revalidateTicketsLookupCatalog()
     return NextResponse.json({ success: true })

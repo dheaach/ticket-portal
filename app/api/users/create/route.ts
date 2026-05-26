@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
 import { db, users } from '@/lib/db'
+import { logUserCreated, userRowToLogSnapshot } from '@/lib/system-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 
 /** POST /api/users/create - Create user (replaces Supabase Auth) */
@@ -41,6 +42,13 @@ export async function POST(request: Request) {
   if (!row) {
     return NextResponse.json({ error: 'Failed to create user' }, { status: 500 })
   }
+
+  await logUserCreated({
+    actorUserId: session.user.id ?? null,
+    actorRole: (session.user as { role?: string }).role,
+    createdUserId: row.id,
+    snapshot: userRowToLogSnapshot(row),
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({

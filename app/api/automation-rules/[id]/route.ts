@@ -5,6 +5,29 @@ import { auth } from '@/auth'
 import { canAccessAutomationRules } from '@/lib/auth-utils'
 import { db } from '@/lib/db'
 import { automationRules } from '@/lib/db'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
+
+function ruleSnapshot(r: {
+  name: string | null
+  eventType: string
+  conditions: unknown
+  actions: unknown
+  priority: number | null
+  companyId: string | null
+  status: boolean | null
+}) {
+  return {
+    name: r.name,
+    event_type: r.eventType,
+    conditions: r.conditions,
+    actions: r.actions,
+    priority: r.priority ?? 0,
+    company_id: r.companyId,
+    status: r.status ?? true,
+  }
+}
+
+const RULE_LOG_KEYS = ['name', 'event_type', 'conditions', 'actions', 'priority', 'company_id', 'status']
 
 /** PATCH /api/automation-rules/[id] - Update rule */
 export async function PATCH(
@@ -41,15 +64,31 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  const ruleId = parseInt(id, 10)
+  const [current] = await db.select().from(automationRules).where(eq(automationRules.id, ruleId)).limit(1)
+  if (!current) {
+    return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+  }
+
   const [updated] = await db
     .update(automationRules)
     .set(values as typeof automationRules.$inferInsert)
-    .where(eq(automationRules.id, parseInt(id)))
+    .where(eq(automationRules.id, ruleId))
     .returning()
 
   if (!updated) {
     return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
   }
+
+  await logSettingsUpdated({
+    session,
+    entityType: 'automation_rule',
+    entityId: String(ruleId),
+    label: updated.name ?? `Rule #${ruleId}`,
+    before: ruleSnapshot(current),
+    after: ruleSnapshot(updated),
+    keys: RULE_LOG_KEYS,
+  })
 
   return NextResponse.json({
     id: updated.id,
@@ -80,15 +119,29 @@ export async function DELETE(
   }
 
   const { id } = await params
+  const ruleId = parseInt(id, 10)
+
+  const [current] = await db.select().from(automationRules).where(eq(automationRules.id, ruleId)).limit(1)
+  if (!current) {
+    return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+  }
 
   const [deleted] = await db
     .delete(automationRules)
-    .where(eq(automationRules.id, parseInt(id)))
+    .where(eq(automationRules.id, ruleId))
     .returning({ id: automationRules.id })
 
   if (!deleted) {
     return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
   }
+
+  await logSettingsDeleted({
+    session,
+    entityType: 'automation_rule',
+    entityId: String(ruleId),
+    label: current.name ?? `Rule #${ruleId}`,
+    snapshot: ruleSnapshot(current),
+  })
 
   return NextResponse.json({ success: true })
 }

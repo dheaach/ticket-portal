@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db, ticketAttributs } from '@/lib/db'
 import { bumpTicketDataVersion } from '@/lib/firebase/ticket-sync-server'
+import { logTicketActivity, type TicketActorRole } from '@/lib/ticket-activity-log'
 
 /** POST /api/tickets/[id]/attributes - Add attribute */
 export async function POST(
@@ -38,6 +39,20 @@ export async function POST(
   }
 
   bumpTicketDataVersion(ticketId)
+
+  const role = (session.user as { role?: string }).role?.toLowerCase()
+  const actorRole: TicketActorRole = role === 'customer' ? 'customer' : 'agent'
+  await logTicketActivity({
+    ticketId,
+    actorUserId: session.user.id ?? null,
+    actorRole,
+    action: 'ticket_attribute_added',
+    metadata: {
+      attribute_id: row.id,
+      meta_key: row.metaKey,
+      meta_value: row.metaValue,
+    },
+  })
 
   return NextResponse.json({
     id: row.id,

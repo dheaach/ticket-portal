@@ -4,8 +4,33 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { ticketStatuses } from '@/lib/db'
+import { logSettingsCreated } from '@/lib/settings-activity-log'
 import { isTicketStatusInKanban } from '@/lib/ticket-status-kanban'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+
+function statusSnapshot(r: {
+  title: string
+  slug: string
+  customerTitle?: string | null
+  description?: string | null
+  color?: string | null
+  showInKanban?: boolean | null
+  sortOrder?: number | null
+  isDeletable?: boolean | null
+  isActive?: boolean | null
+}) {
+  return {
+    title: r.title,
+    slug: r.slug,
+    customer_title: r.customerTitle ?? null,
+    description: r.description ?? '',
+    color: r.color ?? '#8c8c8c',
+    show_in_kanban: isTicketStatusInKanban(r.showInKanban),
+    sort_order: r.sortOrder ?? 0,
+    is_deletable: r.isDeletable ?? true,
+    is_active: r.isActive ?? true,
+  }
+}
 
 /** GET /api/ticket-statuses - List all ticket statuses */
 export async function GET() {
@@ -70,6 +95,14 @@ export async function POST(request: Request) {
   if (!inserted) {
     return NextResponse.json({ error: 'Insert failed' }, { status: 500 })
   }
+
+  await logSettingsCreated({
+    session,
+    entityType: 'ticket_status',
+    entityId: String(inserted.id),
+    label: inserted.title,
+    snapshot: statusSnapshot(inserted),
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({

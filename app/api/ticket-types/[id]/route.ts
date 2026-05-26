@@ -4,7 +4,10 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { ticketTypes } from '@/lib/db'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+
+const TYPE_LOG_KEYS = ['title', 'slug', 'color', 'sort_order', 'description', 'is_agent_only']
 
 /** PATCH /api/ticket-types/[id] - Update ticket type */
 export async function PATCH(
@@ -37,6 +40,11 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  const [current] = await db.select().from(ticketTypes).where(eq(ticketTypes.id, typeId)).limit(1)
+  if (!current) {
+    return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 })
+  }
+
   const [updated] = await db
     .update(ticketTypes)
     .set(values as typeof ticketTypes.$inferInsert)
@@ -46,6 +54,24 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 })
   }
+
+  const snap = (r: typeof current) => ({
+    title: r.title,
+    slug: r.slug,
+    color: r.color ?? '#000000',
+    sort_order: r.sortOrder ?? 0,
+    description: r.description ?? '',
+    is_agent_only: r.isAgentOnly ?? false,
+  })
+  await logSettingsUpdated({
+    session,
+    entityType: 'ticket_type',
+    entityId: String(typeId),
+    label: updated.title,
+    before: snap(current),
+    after: snap(updated),
+    keys: TYPE_LOG_KEYS,
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({
@@ -78,6 +104,11 @@ export async function DELETE(
   }
 
   try {
+    const [current] = await db.select().from(ticketTypes).where(eq(ticketTypes.id, typeId)).limit(1)
+    if (!current) {
+      return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 })
+    }
+
     const [deleted] = await db
       .delete(ticketTypes)
       .where(eq(ticketTypes.id, typeId))
@@ -86,6 +117,21 @@ export async function DELETE(
     if (!deleted) {
       return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 })
     }
+
+    await logSettingsDeleted({
+      session,
+      entityType: 'ticket_type',
+      entityId: String(typeId),
+      label: current.title,
+      snapshot: {
+        title: current.title,
+        slug: current.slug,
+        color: current.color ?? '#000000',
+        sort_order: current.sortOrder ?? 0,
+        description: current.description ?? '',
+        is_agent_only: current.isAgentOnly ?? false,
+      },
+    })
 
     revalidateTicketsLookupCatalog()
     return NextResponse.json({ success: true })

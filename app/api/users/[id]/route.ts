@@ -6,6 +6,12 @@ import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
 import { companies, db, emailIntegrations,users } from '@/lib/db'
+import {
+  actorRoleFromSession,
+  logSystemActivity,
+  logUserUpdated,
+  userRowToLogSnapshot,
+} from '@/lib/system-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 
 function encodeSubjectHeader(subject: string): string {
@@ -183,6 +189,8 @@ export async function PATCH(
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
 
+  const beforeSnapshot = userRowToLogSnapshot(targetUser)
+
   if (body.send_reset_email) {
     if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -202,6 +210,14 @@ export async function PATCH(
     await sendCustomerResetPasswordEmail({
       toEmail: targetUser.email,
       temporaryPassword,
+    })
+    await logUserUpdated({
+      actorUserId: session.user.id ?? null,
+      actorRole: actorRoleFromSession(session),
+      targetUserId: id,
+      before: beforeSnapshot,
+      after: beforeSnapshot,
+      extra: { password_reset_email_sent: true },
     })
     return NextResponse.json({ ok: true, sent: true })
   }
@@ -235,7 +251,22 @@ export async function PATCH(
     updateData.passwordHash = await bcrypt.hash(body.password, 10)
   }
 
+  const passwordChanged = Boolean(isAdmin && body.password)
   await db.update(users).set({ ...updateData, updatedAt: new Date() }).where(eq(users.id, id))
+
+  const [afterRow] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+  if (afterRow) {
+    const extra: Record<string, unknown> = {}
+    if (passwordChanged) extra.password_changed = true
+    await logUserUpdated({
+      actorUserId: session.user.id ?? null,
+      actorRole: actorRoleFromSession(session),
+      targetUserId: id,
+      before: beforeSnapshot,
+      after: userRowToLogSnapshot(afterRow),
+      extra: Object.keys(extra).length ? extra : undefined,
+    })
+  }
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({ ok: true })
@@ -264,7 +295,11 @@ export async function DELETE(
     return NextResponse.json({ error: 'You cannot deactivate your own account this way' }, { status: 400 })
   }
 
-  const [target] = await db.select({ id: users.id }).from(users).where(eq(users.id, id)).limit(1)
+  const [target] = await db
+    .select({ id: users.id, email: users.email, status: users.status })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1)
   if (!target) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
@@ -277,6 +312,19 @@ export async function DELETE(
       updatedAt: new Date(),
     })
     .where(eq(users.id, id))
+
+  await logSystemActivity({
+    category: 'user',
+    action: 'user_deactivated',
+    entityType: 'user',
+    entityId: id,
+    actorUserId: session.user.id ?? null,
+    actorRole: role ?? 'admin',
+    metadata: {
+      email: target.email ?? null,
+      previous_status: target.status ?? null,
+    },
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({ ok: true, deactivated: true })

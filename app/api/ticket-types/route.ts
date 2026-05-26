@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { ticketTypes } from '@/lib/db'
+import { logSettingsCreated } from '@/lib/settings-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 
 /** GET /api/ticket-types - List all ticket types */
@@ -67,6 +68,21 @@ export async function POST(request: Request) {
   if (!inserted) {
     return NextResponse.json({ error: 'Insert failed' }, { status: 500 })
   }
+
+  await logSettingsCreated({
+    session,
+    entityType: 'ticket_type',
+    entityId: String(inserted.id),
+    label: inserted.title,
+    snapshot: {
+      title: inserted.title,
+      slug: inserted.slug,
+      color: inserted.color ?? '#000000',
+      sort_order: inserted.sortOrder ?? 0,
+      description: inserted.description ?? '',
+      is_agent_only: inserted.isAgentOnly ?? false,
+    },
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({

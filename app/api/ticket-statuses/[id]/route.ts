@@ -4,9 +4,46 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { tickets,ticketStatuses } from '@/lib/db'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
 import { isTicketStatusInKanban } from '@/lib/ticket-status-kanban'
 import { isLockedTicketStatusSlug } from '@/lib/ticket-status-locked-slugs'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+
+const STATUS_LOG_KEYS = [
+  'title',
+  'slug',
+  'customer_title',
+  'description',
+  'color',
+  'show_in_kanban',
+  'sort_order',
+  'is_deletable',
+  'is_active',
+]
+
+function statusSnapshot(r: {
+  title: string
+  slug: string
+  customerTitle?: string | null
+  description?: string | null
+  color?: string | null
+  showInKanban?: boolean | null
+  sortOrder?: number | null
+  isDeletable?: boolean | null
+  isActive?: boolean | null
+}) {
+  return {
+    title: r.title,
+    slug: r.slug,
+    customer_title: r.customerTitle ?? null,
+    description: r.description ?? '',
+    color: r.color ?? '#8c8c8c',
+    show_in_kanban: isTicketStatusInKanban(r.showInKanban),
+    sort_order: r.sortOrder ?? 0,
+    is_deletable: r.isDeletable ?? true,
+    is_active: r.isActive ?? true,
+  }
+}
 
 /** PATCH /api/ticket-statuses/[id] - Update ticket status */
 export async function PATCH(
@@ -70,6 +107,16 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ error: 'Status not found' }, { status: 404 })
   }
+
+  await logSettingsUpdated({
+    session,
+    entityType: 'ticket_status',
+    entityId: String(statusId),
+    label: updated.title,
+    before: statusSnapshot(current),
+    after: statusSnapshot(updated),
+    keys: STATUS_LOG_KEYS,
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({
@@ -140,6 +187,14 @@ export async function DELETE(
     if (!deleted) {
       return NextResponse.json({ error: 'Status not found' }, { status: 404 })
     }
+
+    await logSettingsDeleted({
+      session,
+      entityType: 'ticket_status',
+      entityId: String(statusId),
+      label: status.title,
+      snapshot: statusSnapshot(status),
+    })
 
     revalidateTicketsLookupCatalog()
     return NextResponse.json({ success: true })

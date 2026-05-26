@@ -4,7 +4,10 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { tags } from '@/lib/db'
+import { logSettingsDeleted, logSettingsUpdated } from '@/lib/settings-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+
+const TAG_LOG_KEYS = ['name', 'slug', 'color']
 
 /** PATCH /api/tags/[id] - Update tag */
 export async function PATCH(
@@ -29,6 +32,11 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  const [current] = await db.select().from(tags).where(eq(tags.id, id)).limit(1)
+  if (!current) {
+    return NextResponse.json({ error: 'Tag not found' }, { status: 404 })
+  }
+
   const [updated] = await db
     .update(tags)
     .set(values as typeof tags.$inferInsert)
@@ -38,6 +46,24 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ error: 'Tag not found' }, { status: 404 })
   }
+
+  await logSettingsUpdated({
+    session,
+    entityType: 'tag',
+    entityId: id,
+    label: updated.name,
+    before: {
+      name: current.name,
+      slug: current.slug,
+      color: current.color ?? '#000000',
+    },
+    after: {
+      name: updated.name,
+      slug: updated.slug,
+      color: updated.color ?? '#000000',
+    },
+    keys: TAG_LOG_KEYS,
+  })
 
   revalidateTicketsLookupCatalog()
   return NextResponse.json({
@@ -63,6 +89,11 @@ export async function DELETE(
   const { id } = await params
 
   try {
+    const [current] = await db.select().from(tags).where(eq(tags.id, id)).limit(1)
+    if (!current) {
+      return NextResponse.json({ error: 'Tag not found' }, { status: 404 })
+    }
+
     const [deleted] = await db
       .delete(tags)
       .where(eq(tags.id, id))
@@ -71,6 +102,14 @@ export async function DELETE(
     if (!deleted) {
       return NextResponse.json({ error: 'Tag not found' }, { status: 404 })
     }
+
+    await logSettingsDeleted({
+      session,
+      entityType: 'tag',
+      entityId: id,
+      label: current.name,
+      snapshot: { name: current.name, slug: current.slug, color: current.color ?? '#000000' },
+    })
 
     revalidateTicketsLookupCatalog()
     return NextResponse.json({ success: true })
