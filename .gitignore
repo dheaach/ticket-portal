@@ -24,6 +24,12 @@
 .DS_Store
 *.pem
 
+# database dumps (may contain OAuth tokens, webhooks, etc.)
+myappdb_backup.sql/
+myappdb_backup.sql.gz
+*.sql.gz
+psql-restore.log
+
 # debug
 npm-debug.log*
 yarn-debug.log*
