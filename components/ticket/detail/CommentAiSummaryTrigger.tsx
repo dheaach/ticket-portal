@@ -2,8 +2,9 @@
 
 import { RobotOutlined } from '@ant-design/icons'
 import { Button, Tooltip } from 'antd'
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
+import { summarizeAnchorSearchParams } from '@/lib/ticket-ai-summary-anchor'
 import type { SummarizeAnchorRequest } from '@/lib/ticket-comment-summarize'
 
 import CommentAiSummaryModal from './CommentAiSummaryModal'
@@ -29,16 +30,44 @@ export default function CommentAiSummaryTrigger({
   addCommentLoading = false,
   disabled = false,
   size = 'middle',
-  tooltip = 'AI summary (English)',
+  tooltip,
 }: CommentAiSummaryTriggerProps) {
   const [open, setOpen] = useState(false)
+  const [hasSavedSummary, setHasSavedSummary] = useState(false)
+
+  const refreshSavedState = useCallback(async () => {
+    if (!ticketId || ticketId <= 0) return
+    try {
+      const res = await fetch(
+        `/api/tickets/${ticketId}/comments/summarize?${summarizeAnchorSearchParams(summarizeAnchor)}`,
+        { credentials: 'include' }
+      )
+      setHasSavedSummary(res.ok)
+    } catch {
+      setHasSavedSummary(false)
+    }
+  }, [ticketId, summarizeAnchor])
+
+  useEffect(() => {
+    void refreshSavedState()
+  }, [refreshSavedState])
 
   if (!ticketId || ticketId <= 0) return null
   if (!onAddComment && !onApplyToDescription) return null
 
+  const tooltipText =
+    tooltip ??
+    (hasSavedSummary
+      ? summarizeAnchor.type === 'comment'
+        ? 'View saved AI summary for this comment (English)'
+        : 'View saved AI summary (English)'
+      : summarizeAnchor.type === 'comment'
+        ? 'Generate AI summary for this comment once (English)'
+        : 'Generate AI summary once (English)')
+
   return (
     <>
-      <Tooltip title={tooltip}>
+      <Tooltip title={tooltipText}>
         <Button
           icon={<RobotOutlined />}
           size={size}
@@ -56,6 +85,9 @@ export default function CommentAiSummaryTrigger({
         onAddComment={onAddComment}
         onAddChecklistItems={onAddChecklistItems}
         onApplyToDescription={onApplyToDescription}
+        onSummarySaved={() => {
+          setHasSavedSummary(true)
+        }}
       />
     </>
   )

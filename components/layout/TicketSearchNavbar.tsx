@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { SpaNavLink } from '@/components/common/SpaNavLink'
 import ThemeToggle from '@/components/common/ThemeToggle'
 import NavbarAccount, { type NavbarAccountUser } from '@/components/layout/NavbarAccount'
+import ActiveTimeTrackerNavButton from '@/components/ticket/ActiveTimeTrackerNavButton'
 import TicketActivityActorAvatar from '@/components/ticket/TicketActivityActorAvatar'
 import TicketNotificationBell from '@/components/ticket/TicketNotificationBell'
 import {
@@ -516,6 +517,7 @@ export default function TicketSearchNavbar({
         }}
       >
         <ThemeToggle variant="ticketNav" placement="bottomRight" />
+        <ActiveTimeTrackerNavButton />
         <TicketNotificationBell />
 
         <div

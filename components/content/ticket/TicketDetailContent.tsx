@@ -63,6 +63,7 @@ import TabGeneralCustomer from '@/components/ticket/detail/TabGeneralCustomer'
 import TicketPresenceBar from '@/components/ticket/TicketPresenceBar'
 import { canDeleteTickets, isAdmin, isAdminOrManager } from '@/lib/auth-utils'
 import { useTicketDetailLiveSync } from '@/lib/firebase/useTicketDetailLiveSync'
+import { linkifyRichHtml } from '@/lib/linkify-rich-html'
 
 const { Content } = Layout
 const { Title, Text } = Typography
@@ -798,9 +799,10 @@ export default function TicketDetailContent({
             await apiFetch(`/api/tickets/${displayTicket.id}/comments/${commentId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ comment: editingCommentValue.trim() }),
+                body: JSON.stringify({ comment: linkifyRichHtml(editingCommentValue.trim()) }),
             })
-            setComments(comments.map((c) => (c.id === commentId ? { ...c, comment: editingCommentValue.trim() } : c)))
+            const linkedComment = linkifyRichHtml(editingCommentValue.trim())
+            setComments(comments.map((c) => (c.id === commentId ? { ...c, comment: linkedComment } : c)))
             setEditingComment(null)
             setEditingCommentValue('')
             message.success('Comment updated')
@@ -908,11 +910,12 @@ export default function TicketDetailContent({
             await apiFetch(`/api/tickets/${displayTicket.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ description: descriptionValue.trim() || null }),
+                body: JSON.stringify({ description: linkifyRichHtml(descriptionValue.trim()) || null }),
             })
             setEditingDescription(false)
             message.success('Description updated successfully')
-            setDisplayTicket((prev: any) => ({ ...prev, description: descriptionValue.trim() || null }))
+            const linkedDesc = linkifyRichHtml(descriptionValue.trim()) || null
+            setDisplayTicket((prev: any) => ({ ...prev, description: linkedDesc }))
         } catch (err: any) {
             message.error(err?.message || 'Failed to update description')
         } finally {

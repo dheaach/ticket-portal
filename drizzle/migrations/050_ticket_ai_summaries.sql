@@ -1,0 +1,2 @@
+-- Superseded by 051_ticket_ai_summaries_per_comment.sql (per-comment / per-anchor storage).
+-- If you already ran this file, run 051 next. If not, run 051 only.

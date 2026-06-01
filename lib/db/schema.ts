@@ -296,6 +296,35 @@ export const ticketComments = pgTable('ticket_comments', {
   createdAt: ts('created_at').notNull().defaultNow(),
 })
 
+/** One saved AI summary per anchor (per comment, description, or ticket header). */
+export const ticketAiSummaries = pgTable(
+  'ticket_ai_summaries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ticketId: integer('ticket_id')
+      .notNull()
+      .references(() => tickets.id, { onDelete: 'cascade' }),
+    anchorType: varchar('anchor_type', { length: 32 }).notNull(),
+    focalCommentId: uuid('focal_comment_id').references(() => ticketComments.id, {
+      onDelete: 'cascade',
+    }),
+    summary: jsonb('summary').notNull().default([]),
+    checklist: jsonb('checklist').notNull().default([]),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    appliedToCommentAt: ts('applied_to_comment_at'),
+    appliedToDescriptionAt: ts('applied_to_description_at'),
+    appliedToChecklistAt: ts('applied_to_checklist_at'),
+  },
+  (t) => [
+    uniqueIndex('ticket_ai_summaries_anchor_unique').on(
+      t.ticketId,
+      t.anchorType,
+      t.focalCommentId
+    ),
+  ]
+)
+
 /** Append-only audit trail for ticket lifecycle (create/update/delete, comments, automation, email). */
 export const ticketActivityLog = pgTable(
   'ticket_activity_log',

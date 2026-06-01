@@ -40,8 +40,12 @@ export function stripHtmlForPrompt(html: string): string {
   return decodeBasicHtmlEntities(s).replace(/\s+/g, ' ').trim()
 }
 
+/** Max comments sent to OpenAI (oldest-first slice when over limit). */
+export const SUMMARIZE_MAX_COMMENTS = 80
+
 export type SummarizeAnchorRequest =
   | { type: 'description' }
+  | { type: 'ticket' }
   | { type: 'comment'; commentId: string }
 
 export type LocalizedSummarizeComment = {
@@ -56,7 +60,7 @@ export type LocalizedSummarizeComment = {
 
 export type LocalizedSummarizeContext = {
   ticketTitle: string
-  anchor: 'description' | 'comment'
+  anchor: 'description' | 'ticket' | 'comment'
   focalAuthor: string
   focalAuthorType: string
   ticketDescription?: string
@@ -78,10 +82,7 @@ export function pickCommentWindow<T extends { id: string }>(
 }
 
 export function buildLocalizedSummarizePrompt(ctx: LocalizedSummarizeContext): string {
-  const descriptionBlock =
-    ctx.anchor === 'description'
-      ? `Ticket description (focal):\n${(ctx.ticketDescription ?? '').slice(0, 8000) || '(empty)'}`
-      : ''
+  const descriptionBlock = `Ticket description:\n${(ctx.ticketDescription ?? '').slice(0, 8000) || '(empty)'}`
 
   const commentsBlock =
     ctx.comments.length > 0
@@ -94,11 +95,16 @@ export function buildLocalizedSummarizePrompt(ctx: LocalizedSummarizeContext): s
       : '(no comments in this excerpt)'
 
   const excerptIntro =
-    ctx.anchor === 'description'
-      ? 'Excerpt = ticket description + up to the 3 oldest comments by the focal author only (other authors are excluded).'
-      : 'Excerpt = the focal comment plus up to 3 comments above and 3 below it (chronological).'
+    ctx.anchor === 'comment'
+      ? 'Excerpt = full ticket thread (description + all comments below). The comment marked [FOCAL] is the primary focus; include the rest as context.'
+      : 'Excerpt = full ticket thread: description + all comments (chronological, all authors).'
 
-  return `You are summarizing a short excerpt of a support ticket for agents.
+  const voiceHint =
+    ctx.anchor === 'comment'
+      ? `Primary focus: comment by ${ctx.focalAuthor} (${ctx.focalAuthorType}) marked [FOCAL]. Write summary/checklist from the whole thread but emphasize that comment and follow-ups it implies.`
+      : 'Summarize the entire thread for agents (all authors: customer, agents, automation context if any). Use clear neutral agent voice (third person or "we" as the support team).'
+
+  return `You are summarizing a support ticket thread for agents.
 
 Ticket title: ${ctx.ticketTitle}
 ${excerptIntro}
@@ -106,8 +112,7 @@ ${excerptIntro}
 ${descriptionBlock ? `${descriptionBlock}\n\n` : ''}Comments in excerpt:
 ${commentsBlock}
 
-Focal author (write the summary in their voice, first person where natural): ${ctx.focalAuthor} (${ctx.focalAuthorType})
-Only summarize what this author contributed in the excerpt (their description and/or their comments). Ignore other authors' messages except as brief context.
+${voiceHint}
 
 Return JSON only: {"summary":["..."],"checklist":["..."]}
 
@@ -304,6 +309,23 @@ export function parseSummarizeAnchorBody(body: unknown): SummarizeAnchorRequest 
     if (o.anchor === 'comment' && typeof o.commentId === 'string' && o.commentId.trim()) {
       return { type: 'comment', commentId: o.commentId.trim() }
     }
+    if (o.anchor === 'ticket') return { type: 'ticket' }
+    if (o.anchor === 'description') return { type: 'description' }
   }
   return { type: 'description' }
+}
+
+/** Trim comment list to API limit while keeping focal comment when possible. */
+export function sliceCommentsForSummarize<T extends { id: string }>(
+  ordered: T[],
+  focalCommentId?: string | null
+): T[] {
+  if (ordered.length <= SUMMARIZE_MAX_COMMENTS) return ordered
+  const focalIndex = focalCommentId ? ordered.findIndex((c) => c.id === focalCommentId) : -1
+  if (focalIndex < 0) return ordered.slice(-SUMMARIZE_MAX_COMMENTS)
+  const half = Math.floor(SUMMARIZE_MAX_COMMENTS / 2)
+  let start = Math.max(0, focalIndex - half)
+  const end = Math.min(ordered.length, start + SUMMARIZE_MAX_COMMENTS)
+  start = Math.max(0, end - SUMMARIZE_MAX_COMMENTS)
+  return ordered.slice(start, end)
 }

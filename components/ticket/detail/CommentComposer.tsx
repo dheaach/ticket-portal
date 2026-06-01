@@ -11,6 +11,7 @@ import {
 import { Button, Flex, message, Select } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { linkifyRichHtml } from '@/lib/linkify-rich-html'
 import { uploadTicketFile } from '@/utils/storage'
 
 import CommentWysiwyg from './CommentWysiwyg'
@@ -191,7 +192,7 @@ export default function CommentComposer({
         if (cc.length > 0) extra.ccEmails = cc
         if (bcc.length > 0) extra.bccEmails = bcc
       }
-      await onAddComment(draft.trim(), attachments, Object.keys(extra).length > 0 ? extra : undefined)
+      await onAddComment(linkifyRichHtml(draft.trim()), attachments, Object.keys(extra).length > 0 ? extra : undefined)
       setDraft('')
       setAttachments([])
       setTaggedUserIds([])

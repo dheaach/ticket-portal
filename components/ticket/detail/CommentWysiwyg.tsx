@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef,useState } from 'react'
 
 import { useTheme } from '@/components/providers/ThemeProvider'
 import { registerCommentWysiwygQuill } from '@/lib/comment-wysiwyg-quill-register'
+import { linkifyRichHtml } from '@/lib/linkify-rich-html'
 import { uploadTicketImage } from '@/utils/storage'
 
 const ReactQuill = dynamic(() => import('react-quill-new'), { ssr: false })
@@ -58,6 +59,8 @@ interface CommentWysiwygProps {
    * Message templates keep `false` so `{{ placeholders }}` stay literal.
    */
   useSemanticHTML?: boolean
+  /** Auto-link http(s) URLs on paste and blur (default true). */
+  autoLinkify?: boolean
 }
 
 export default function CommentWysiwyg({
@@ -68,6 +71,7 @@ export default function CommentWysiwyg({
   bgColor = 'transparent',
   ticketId,
   useSemanticHTML = false,
+  autoLinkify = true,
 }: CommentWysiwygProps) {
   const { resolved } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -75,6 +79,12 @@ export default function CommentWysiwyg({
   const normalizedPlainTextForQuillRef = useRef(false)
   const ticketIdRef = useRef(ticketId)
   ticketIdRef.current = ticketId
+  const onChangeRef = useRef(onChange)
+  const valueRef = useRef(value)
+  const autoLinkifyRef = useRef(autoLinkify)
+  onChangeRef.current = onChange
+  valueRef.current = value
+  autoLinkifyRef.current = autoLinkify
 
   const modules = useMemo(() => ({
     toolbar: {
@@ -125,6 +135,44 @@ export default function CommentWysiwyg({
     registerCommentWysiwygQuill()
     setMounted(true)
   }, [])
+
+  /** After paste, linkify bare URLs in the editor HTML. */
+  useEffect(() => {
+    if (!mounted || !autoLinkify) return
+
+    let root: HTMLElement | null = null
+    let onPaste: (() => void) | null = null
+
+    const attach = () => {
+      const editor = quillRef.current?.getEditor() as (QuillEditor & { root?: HTMLElement }) | undefined
+      const el = editor?.root ?? null
+      if (!el || el === root) return
+      if (root && onPaste) root.removeEventListener('paste', onPaste)
+      root = el
+      onPaste = () => {
+        requestAnimationFrame(() => {
+          if (!autoLinkifyRef.current || !onChangeRef.current || !root) return
+          const current = root.innerHTML
+          const linked = linkifyRichHtml(current)
+          if (linked !== current) onChangeRef.current(linked)
+        })
+      }
+      root.addEventListener('paste', onPaste)
+    }
+
+    attach()
+    const t = window.setTimeout(attach, 50)
+    return () => {
+      window.clearTimeout(t)
+      if (root && onPaste) root.removeEventListener('paste', onPaste)
+    }
+  }, [mounted, autoLinkify])
+
+  const applyAutoLinkify = () => {
+    if (!autoLinkify || !onChange) return
+    const linked = linkifyRichHtml(value ?? '')
+    if (linked !== (value ?? '')) onChange(linked)
+  }
 
   useEffect(() => {
     normalizedPlainTextForQuillRef.current = false
@@ -180,6 +228,7 @@ export default function CommentWysiwyg({
     theme: 'snow',
     value,
     onChange: (v: string) => onChange?.(v),
+    onBlur: applyAutoLinkify,
     placeholder,
     modules,
     formats: QUILL_FORMATS,

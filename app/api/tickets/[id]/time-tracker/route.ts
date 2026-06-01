@@ -13,12 +13,16 @@ const MAX_NOTE_LENGTH = 2000
 function normalizeNoteFromBodyOptional(body: Record<string, unknown>): string | null | undefined {
   if (!Object.prototype.hasOwnProperty.call(body, 'note')) return undefined
   const raw = body.note
-  if (raw === null || raw === undefined) return null
+  if (raw === null || raw === undefined) {
+    throw new Error('Note is required')
+  }
   if (typeof raw !== 'string') {
-    throw new Error('note must be a string or null')
+    throw new Error('note must be a string')
   }
   const s = raw.trim()
-  if (s === '') return null
+  if (s === '') {
+    throw new Error('Note is required')
+  }
   return s.slice(0, MAX_NOTE_LENGTH)
 }
 
@@ -28,14 +32,14 @@ async function normalizeJobTypeFromBodyOptional(
   if (!Object.prototype.hasOwnProperty.call(body, 'job_type')) return undefined
   const raw = body.job_type
   if (raw === null || raw === undefined || raw === '') {
-    return null
+    throw new Error('Job type is required')
   }
   if (typeof raw !== 'string') {
-    throw new Error('job_type must be a string or null')
+    throw new Error('job_type must be a string')
   }
   const s = raw.trim().slice(0, 64)
   if (s === '') {
-    return null
+    throw new Error('Job type is required')
   }
   await assertValidJobTypeSlugOrNull(s)
   return s

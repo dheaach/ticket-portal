@@ -3,40 +3,29 @@ import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
 import { assertCustomerMayAccessTicket } from '@/lib/customer-ticket-access'
+import { db, ticketComments, tickets, users } from '@/lib/db'
 import {
-  db,
-  ticketComments,
-  tickets,
-  users,
-} from '@/lib/db'
+  getTicketAiSummary,
+  markTicketAiSummaryApplied,
+  parseSummarizeAnchorFromSearchParams,
+  saveTicketAiSummary,
+  type TicketAiSummaryApplyTarget,
+  ticketAiSummaryToJson,
+} from '@/lib/ticket-ai-summary'
 import {
   buildLocalizedSummarizePrompt,
   parseSummarizeAnchorBody,
-  pickCommentWindow,
   requestOpenAiLocalizedSummary,
+  sliceCommentsForSummarize,
   stripHtmlForPrompt,
+  type SummarizeAnchorRequest,
 } from '@/lib/ticket-comment-summarize'
 
 function authorLabel(name: string | null, email: string | null): string {
   return name || email || 'Unknown'
 }
 
-/** POST /api/tickets/[id]/comments/summarize — localized AI summary (focal + neighbors) */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const { id } = await params
-  const ticketId = parseInt(id, 10)
-  if (isNaN(ticketId)) {
-    return NextResponse.json({ error: 'Invalid ticket ID' }, { status: 400 })
-  }
-
-  const role = (session.user as { role?: string }).role?.toLowerCase() ?? 'user'
-  const userId = session.user.id
-
+async function authorizeTicketSummarize(ticketId: number, userId: string, role: string) {
   if (role === 'customer') {
     const access = await assertCustomerMayAccessTicket(userId, ticketId)
     if (!access.ok) {
@@ -46,10 +35,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       )
     }
   }
+  const [ticket] = await db
+    .select({ id: tickets.id })
+    .from(tickets)
+    .where(eq(tickets.id, ticketId))
+    .limit(1)
+  if (!ticket) {
+    return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+  }
+  return null
+}
 
-  const body = await request.json().catch(() => ({}))
-  const anchor = parseSummarizeAnchorBody(body)
+type CommentRow = {
+  comment: (typeof ticketComments.$inferSelect)
+  userName: string | null
+  userEmail: string | null
+}
 
+async function buildPromptContext(
+  ticketId: number,
+  anchor: SummarizeAnchorRequest,
+  role: string
+) {
   const [ticket] = await db
     .select({
       id: tickets.id,
@@ -64,9 +71,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .where(eq(tickets.id, ticketId))
     .limit(1)
 
-  if (!ticket) {
-    return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
-  }
+  if (!ticket) return null
 
   const commentScope =
     role === 'customer'
@@ -87,9 +92,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .where(commentScope)
     .orderBy(asc(ticketComments.createdAt))
 
-  type Row = (typeof commentRows)[number]
-
-  const mapComment = (r: Row, isFocal: boolean) => ({
+  const mapComment = (r: CommentRow, isFocal: boolean) => ({
     id: r.comment.id,
     isFocal,
     author: authorLabel(r.userName, r.userEmail),
@@ -99,57 +102,168 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     body: stripHtmlForPrompt(r.comment.comment ?? ''),
   })
 
-  let promptCtx: Parameters<typeof buildLocalizedSummarizePrompt>[0]
+  const ticketDescription = stripHtmlForPrompt(ticket.description ?? '')
+  const rowsWithId = commentRows.map((r) => ({ row: r, id: r.comment.id }))
+  const threadSlice = sliceCommentsForSummarize(
+    rowsWithId,
+    anchor.type === 'comment' ? anchor.commentId : null
+  )
 
   if (anchor.type === 'comment') {
-    const indexed = commentRows.map((r) => ({ row: r, id: r.comment.id }))
-    const picked = pickCommentWindow(indexed, anchor.commentId, 3, 3)
-    if (!picked) {
-      return NextResponse.json({ error: 'Comment not found' }, { status: 404 })
-    }
+    const focalIndex = threadSlice.findIndex((r) => r.id === anchor.commentId)
+    if (focalIndex < 0) return { error: 'Comment not found' as const }
 
-    const focalRow = picked.window[picked.focalIndex].row
-    const focalAuthor = authorLabel(focalRow.userName, focalRow.userEmail)
-    const focalAuthorType = focalRow.comment.authorType ?? 'agent'
-
-    promptCtx = {
-      ticketTitle: ticket.title,
-      anchor: 'comment',
-      focalAuthor,
-      focalAuthorType,
-      comments: picked.window.map((w, i) => mapComment(w.row, i === picked.focalIndex)),
-    }
-  } else {
-    const focalAuthor = authorLabel(ticket.creatorName, ticket.creatorEmail)
-    const creatorId = ticket.createdBy
-    /** Only the creator's earliest comments (max 3); others are omitted from the excerpt. */
-    const creatorComments =
-      creatorId != null
-        ? commentRows.filter((r) => r.comment.userId === creatorId).slice(0, 3)
-        : []
-
-    promptCtx = {
-      ticketTitle: ticket.title,
-      anchor: 'description',
-      focalAuthor,
-      focalAuthorType: 'agent',
-      ticketDescription: stripHtmlForPrompt(ticket.description ?? ''),
-      comments: creatorComments.map((r) => mapComment(r, false)),
+    const focalRow = threadSlice[focalIndex].row
+    return {
+      promptCtx: {
+        ticketTitle: ticket.title,
+        anchor: 'comment' as const,
+        focalAuthor: authorLabel(focalRow.userName, focalRow.userEmail),
+        focalAuthorType: focalRow.comment.authorType ?? 'agent',
+        ticketDescription,
+        comments: threadSlice.map((w) => mapComment(w.row, w.id === anchor.commentId)),
+      },
+      anchorType: 'comment',
+      focalCommentId: anchor.commentId,
     }
   }
 
+  return {
+    promptCtx: {
+      ticketTitle: ticket.title,
+      anchor: anchor.type === 'ticket' ? ('ticket' as const) : ('description' as const),
+      focalAuthor: authorLabel(ticket.creatorName, ticket.creatorEmail),
+      focalAuthorType: 'agent',
+      ticketDescription,
+      comments: threadSlice.map((w) => mapComment(w.row, false)),
+    },
+    anchorType: anchor.type === 'ticket' ? 'ticket' : 'description',
+    focalCommentId: null as string | null,
+  }
+}
+
+/** GET — return saved summary for this anchor (?anchor=comment&commentId= | description | ticket). */
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await auth()
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const ticketId = parseInt(id, 10)
+  if (isNaN(ticketId)) {
+    return NextResponse.json({ error: 'Invalid ticket ID' }, { status: 400 })
+  }
+
+  const role = (session.user as { role?: string }).role?.toLowerCase() ?? 'user'
+  const authErr = await authorizeTicketSummarize(ticketId, session.user.id, role)
+  if (authErr) return authErr
+
+  const anchor = parseSummarizeAnchorFromSearchParams(new URL(request.url).searchParams)
+  if (!anchor) {
+    return NextResponse.json({ error: 'anchor query required' }, { status: 400 })
+  }
+
+  const row = await getTicketAiSummary(ticketId, anchor)
+  if (!row) {
+    return NextResponse.json({ error: 'No saved summary for this anchor' }, { status: 404 })
+  }
+
+  return NextResponse.json(ticketAiSummaryToJson(row))
+}
+
+/**
+ * POST — generate once per ticket, then return cached result on later calls.
+ * Body: anchor (description | ticket | comment+commentId) used only on first generation.
+ */
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await auth()
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const ticketId = parseInt(id, 10)
+  if (isNaN(ticketId)) {
+    return NextResponse.json({ error: 'Invalid ticket ID' }, { status: 400 })
+  }
+
+  const role = (session.user as { role?: string }).role?.toLowerCase() ?? 'user'
+  const userId = session.user.id
+
+  const authErr = await authorizeTicketSummarize(ticketId, userId, role)
+  if (authErr) return authErr
+
+  const body = await request.json().catch(() => ({}))
+  const anchor = parseSummarizeAnchorBody(body)
+
+  const existing = await getTicketAiSummary(ticketId, anchor)
+  if (existing) {
+    return NextResponse.json(ticketAiSummaryToJson(existing))
+  }
+
+  const built = await buildPromptContext(ticketId, anchor, role)
+  if (!built) {
+    return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+  }
+  if ('error' in built) {
+    return NextResponse.json({ error: built.error }, { status: 404 })
+  }
+
   try {
-    const result = await requestOpenAiLocalizedSummary(buildLocalizedSummarizePrompt(promptCtx))
-    return NextResponse.json({
+    const result = await requestOpenAiLocalizedSummary(
+      buildLocalizedSummarizePrompt(built.promptCtx)
+    )
+    const row = await saveTicketAiSummary({
+      ticketId,
+      anchor,
       summary: result.summary,
       checklist: result.checklist,
-      /** @deprecated use summary */
-      items: result.summary,
+      createdByUserId: userId,
     })
+    return NextResponse.json({ ...ticketAiSummaryToJson(row), cached: false })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Summary failed'
     console.error('[comments/summarize]', err)
     const status = msg.includes('OPENAI_API_KEY') ? 503 : 502
     return NextResponse.json({ error: msg }, { status })
   }
+}
+
+/** PATCH — mark summary as applied to comment, description, or checklist. */
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await auth()
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const ticketId = parseInt(id, 10)
+  if (isNaN(ticketId)) {
+    return NextResponse.json({ error: 'Invalid ticket ID' }, { status: 400 })
+  }
+
+  const role = (session.user as { role?: string }).role?.toLowerCase() ?? 'user'
+  const authErr = await authorizeTicketSummarize(ticketId, session.user.id, role)
+  if (authErr) return authErr
+
+  const body = (await request.json().catch(() => ({}))) as {
+    apply?: string
+    anchor?: string
+    commentId?: string
+  }
+  const apply = body.apply
+  if (apply !== 'comment' && apply !== 'description' && apply !== 'checklist') {
+    return NextResponse.json({ error: 'apply must be comment, description, or checklist' }, { status: 400 })
+  }
+
+  const anchor = parseSummarizeAnchorBody(body)
+  const row = await getTicketAiSummary(ticketId, anchor)
+  if (!row) {
+    return NextResponse.json({ error: 'No saved summary for this anchor' }, { status: 404 })
+  }
+
+  await markTicketAiSummaryApplied(ticketId, anchor, apply as TicketAiSummaryApplyTarget)
+  const updated = await getTicketAiSummary(ticketId, anchor)
+  return NextResponse.json(updated ? ticketAiSummaryToJson(updated) : ticketAiSummaryToJson(row))
 }

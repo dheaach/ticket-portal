@@ -392,7 +392,7 @@ export default function TabGeneral({
                       </TicketUserMention>
                       <Flex vertical style={{ flex: 1, minWidth: 0 }}>
                         <Flex justify="space-between" align="flex-start" wrap="wrap" gap="small">
-                          <Flex vertical gap={2} style={{ minWidth: 0 }}>
+                          <Flex vertical gap={2} style={{ minWidth: 0, flex: 1 }}>
                             {ticketData.company_id ? (
                               <>
                                 <Text strong>
@@ -426,6 +426,17 @@ export default function TabGeneral({
                             )}
                             
                           </Flex>
+                          {showNoteOption && onAddAiSummaryComment && ticketData?.id ? (
+                            <CommentAiSummaryTrigger
+                              ticketId={ticketData.id}
+                              summarizeAnchor={{ type: 'ticket' }}
+                              size="middle"
+                              addCommentLoading={addCommentLoading}
+                              disabled={addCommentLoading || ticketDescriptionSaving}
+                              onAddComment={onAddAiSummaryComment}
+                              onAddChecklistItems={onAddChecklistItemsBulk}
+                            />
+                          ) : null}
                         </Flex>
                         {ticketDescriptionEditing && canEditTicketDescription ? (
                           <Space orientation="vertical" size="small" style={{ width: '100%', marginTop: 8 }}>
@@ -449,18 +460,28 @@ export default function TabGeneral({
                           </Space>
                         ) : (
                           <>
-                            {canEditTicketDescription ? (
+                            {(onApplyAiSummaryToDescription || onAddAiSummaryComment) && ticketData?.id ? (
                               <Flex justify="flex-end" gap={8} style={{ marginTop: 4 }}>
-                                {onApplyAiSummaryToDescription && ticketData?.id ? (
+                                {onApplyAiSummaryToDescription ? (
                                   <CommentAiSummaryTrigger
                                     ticketId={ticketData.id}
                                     summarizeAnchor={{ type: 'description' }}
                                     size="middle"
-                                    tooltip="Summarize description + up to 3 creator comments (English)"
                                     disabled={ticketDescriptionSaving}
                                     onApplyToDescription={onApplyAiSummaryToDescription}
                                   />
                                 ) : null}
+                                {canEditTicketDescription ? (
+                                  <Button
+                                    type="primary"
+                                    icon={<EditOutlined />}
+                                    onClick={onTicketDescriptionEditingStart}
+                                    aria-label="Edit description"
+                                  />
+                                ) : null}
+                              </Flex>
+                            ) : canEditTicketDescription ? (
+                              <Flex justify="flex-end" gap={8} style={{ marginTop: 4 }}>
                                 <Button
                                   type="primary"
                                   icon={<EditOutlined />}
@@ -607,21 +628,20 @@ export default function TabGeneral({
                               <DateDisplay date={comment.created_at} />
                             </Text>
                           </Space>
-                          {!isAutomation && !isCustomer && comment.user_id === currentUserId && editingComment !== comment.id && (
+                          {!isAutomation && editingComment !== comment.id && (
                             <Space>
                               {showNoteOption && onAddAiSummaryComment && ticketData?.id ? (
                                 <CommentAiSummaryTrigger
                                   ticketId={ticketData.id}
                                   summarizeAnchor={{ type: 'comment', commentId: comment.id }}
                                   size="middle"
-                                  tooltip="Summarize this comment + 3 above/below (English)"
                                   addCommentLoading={addCommentLoading}
                                   disabled={addCommentLoading}
                                   onAddComment={onAddAiSummaryComment}
                                   onAddChecklistItems={onAddChecklistItemsBulk}
                                 />
                               ) : null}
-                              {canDeleteComment(comment.created_at) && (
+                              {!isCustomer && comment.user_id === currentUserId ? (
                                 <>
                                   <Button
                                     icon={<EditOutlined />}
@@ -630,17 +650,19 @@ export default function TabGeneral({
                                       onEditComment(comment.id, comment.comment)
                                     }}
                                   />
-                                  <Popconfirm
-                                    title="Delete comment"
-                                    description="Are you sure?"
-                                    onConfirm={() => onDeleteComment(comment.id)}
-                                    okText="Yes"
-                                    cancelText="No"
-                                  >
-                                    <Button danger icon={<DeleteOutlined />} size="middle" />
-                                  </Popconfirm>
+                                  {canDeleteComment(comment.created_at) ? (
+                                    <Popconfirm
+                                      title="Delete comment"
+                                      description="Are you sure?"
+                                      onConfirm={() => onDeleteComment(comment.id)}
+                                      okText="Yes"
+                                      cancelText="No"
+                                    >
+                                      <Button danger icon={<DeleteOutlined />} size="middle" />
+                                    </Popconfirm>
+                                  ) : null}
                                 </>
-                              )}
+                              ) : null}
                             </Space>
                           )}
                         </Flex>

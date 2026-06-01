@@ -263,12 +263,11 @@ export default function TabTimeTracker({
     const origStop = dayjs(adjustTrackerSession.stop_time as string)
     const timesChanged = !start.isSame(origStart, 'second') || !end.isSame(origStop, 'second')
 
-    const newJobType =
-      v.job_type != null && String(v.job_type).trim() !== '' ? String(v.job_type).trim() : null
+    const newJobType = String(v.job_type ?? '').trim()
     const origJobType = (adjustTrackerSession.job_type as string | null | undefined) ?? null
     const jobTypeChanged = newJobType !== origJobType
 
-    const newNote = v.note != null && String(v.note).trim() !== '' ? String(v.note).trim() : null
+    const newNote = String(v.note ?? '').trim()
     const origNote =
       (adjustTrackerSession.note as string | null | undefined)?.trim() || null
     const noteChanged = newNote !== origNote
@@ -685,22 +684,32 @@ export default function TabTimeTracker({
               disabledTime={(d) => getDisabledTimeNotAfterNow(d)}
             />
           </Form.Item>
-          <Form.Item name="job_type" label="Job type">
+          <Form.Item
+            name="job_type"
+            label="Job type"
+            rules={[{ required: true, message: 'Job type is required' }]}
+          >
             <Select
-              allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="What was this work for?"
+              placeholder="Select job type"
               style={{ width: '100%' }}
               options={jobTypeOptions.map((o) => ({ value: o.slug, label: o.title }))}
             />
           </Form.Item>
-          <Form.Item name="note" label="Note">
+          <Form.Item
+            name="note"
+            label="Note"
+            rules={[
+              { required: true, message: 'Note is required' },
+              { whitespace: true, message: 'Note is required' },
+            ]}
+          >
             <Input.TextArea
               rows={3}
               maxLength={2000}
               showCount
-              placeholder="Optional note for this entry"
+              placeholder="Describe what was done during this time"
             />
           </Form.Item>
           {canAdjustReportedDuration ? (
