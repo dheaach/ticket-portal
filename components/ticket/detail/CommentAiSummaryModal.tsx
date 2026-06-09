@@ -113,7 +113,17 @@ export default function CommentAiSummaryModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(anchorBody()),
       })
-      const data = (await postRes.json()) as SummaryApiPayload
+      const postText = await postRes.text()
+      let data: SummaryApiPayload
+      try {
+        data = JSON.parse(postText) as SummaryApiPayload
+      } catch {
+        throw new Error(
+          postRes.ok
+            ? 'Server returned an invalid response'
+            : `Summary request failed (${postRes.status})`
+        )
+      }
       if (!postRes.ok) {
         throw new Error(data.error || 'Failed to generate summary')
       }
