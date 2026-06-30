@@ -15,6 +15,13 @@
       "when": 1775602520000,
       "tag": "0001_numerous_randall_flagg",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782828385253,
+      "tag": "0002_clammy_hellfire_club",
+      "breakpoints": true
     }
   ]
 }
