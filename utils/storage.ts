@@ -5,13 +5,7 @@
  * Server: uses lib/storage-idrive directly
  */
 
-import {
-  deleteObject,
-  getPublicUrl as getIdrivePublicUrl,
-  uploadBuffer,
-} from '@/lib/storage-provider'
-
-const BUCKET_NAME = process.env.IDRIVE_E2_BUCKET || 'dtlabs'
+import { getPublicUrl as getProviderPublicUrl } from '@/lib/storage-public-url'
 
 async function uploadFileClient(file: File, path: string): Promise<{ url: string | null; error: string | null }> {
   const formData = new FormData()
@@ -28,6 +22,7 @@ async function uploadFileClient(file: File, path: string): Promise<{ url: string
 }
 
 async function uploadFileServer(file: File, path: string): Promise<{ url: string | null; error: string | null }> {
+  const { uploadBuffer } = await import('@/lib/storage-provider')
   const buffer = Buffer.from(await file.arrayBuffer())
   const contentType = file.type || 'application/octet-stream'
   return await uploadBuffer(path, buffer, contentType)
@@ -146,6 +141,7 @@ export async function deleteFile(path: string): Promise<boolean> {
   try {
     const isClient = typeof window !== 'undefined'
     if (isClient) return await deleteFileClient(path)
+    const { deleteObject } = await import('@/lib/storage-provider')
     const result = await deleteObject(path)
     return result.ok
   } catch (error) {
@@ -155,5 +151,5 @@ export async function deleteFile(path: string): Promise<boolean> {
 }
 
 export function getPublicUrl(path: string): string {
-  return getIdrivePublicUrl(path)
+  return getProviderPublicUrl(path)
 }
