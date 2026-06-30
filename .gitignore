@@ -42,6 +42,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local file storage (STORAGE_PROVIDER=local) — uploaded files live on the VPS disk,
+# must never be touched/wiped by CI/CD deploys
+/storage-data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

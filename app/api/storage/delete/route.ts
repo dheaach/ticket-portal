@@ -5,7 +5,7 @@
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { deleteObject } from '@/lib/storage-idrive'
+import { deleteObject } from '@/lib/storage-provider'
 
 export async function POST(request: Request) {
   const session = await auth()
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       { status: 403 }
     )
   }
-  // Strip bucket prefix or full URL if accidentally passed
+  // Strip bucket prefix or full URL if accidentally passed (iDrive-specific; no-op for local provider)
   const bucket = process.env.IDRIVE_E2_BUCKET || 'dtlabs'
   if (path.startsWith(`${bucket}/`)) path = path.slice(bucket.length + 1)
   if (path.startsWith('/')) path = path.slice(1)

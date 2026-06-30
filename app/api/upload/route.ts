@@ -5,7 +5,7 @@
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { getPublicUrl,uploadBuffer } from '@/lib/storage-idrive'
+import { uploadBuffer } from '@/lib/storage-provider'
 
 export async function POST(request: Request) {
   const session = await auth()
