@@ -1,42 +1,30 @@
 /**
- * Storage — iDrive e2 (S3-compatible).
+ * Storage — client-side helpers only (browser → /api/upload, /api/storage/delete).
  *
- * Client: uses /api/upload
- * Server: uses lib/storage-idrive directly
+ * Server-side code must call lib/storage-provider directly (see those API
+ * routes) — never import this module from server code, since the upload/
+ * delete implementations (e.g. lib/storage-local.ts) use Node builtins
+ * (`fs/promises`) that cannot be bundled for the browser.
  */
 
 import { getPublicUrl as getProviderPublicUrl } from '@/lib/storage-public-url'
-
-async function uploadFileClient(file: File, path: string): Promise<{ url: string | null; error: string | null }> {
-  const formData = new FormData()
-  formData.set('file', file)
-  formData.set('path', path)
-  const res = await fetch('/api/upload', {
-    method: 'POST',
-    credentials: 'include',
-    body: formData,
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) return { url: null, error: data?.error || 'Upload failed' }
-  return { url: data.url ?? null, error: null }
-}
-
-async function uploadFileServer(file: File, path: string): Promise<{ url: string | null; error: string | null }> {
-  const { uploadBuffer } = await import('@/lib/storage-provider')
-  const buffer = Buffer.from(await file.arrayBuffer())
-  const contentType = file.type || 'application/octet-stream'
-  return await uploadBuffer(path, buffer, contentType)
-}
 
 export async function uploadFile(
   file: File,
   path: string
 ): Promise<{ url: string | null; error: string | null }> {
   try {
-    const isClient = typeof window !== 'undefined'
-    return isClient
-      ? await uploadFileClient(file, path)
-      : await uploadFileServer(file, path)
+    const formData = new FormData()
+    formData.set('file', file)
+    formData.set('path', path)
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { url: null, error: data?.error || 'Upload failed' }
+    return { url: data.url ?? null, error: null }
   } catch (error: unknown) {
     console.error('Failed to upload file:', error)
     return {
@@ -126,24 +114,16 @@ export async function uploadTicketImage(
   return await uploadFile(file, filePath)
 }
 
-async function deleteFileClient(path: string): Promise<boolean> {
-  const res = await fetch('/api/storage/delete', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  })
-  const data = await res.json().catch(() => ({}))
-  return data?.success === true
-}
-
 export async function deleteFile(path: string): Promise<boolean> {
   try {
-    const isClient = typeof window !== 'undefined'
-    if (isClient) return await deleteFileClient(path)
-    const { deleteObject } = await import('@/lib/storage-provider')
-    const result = await deleteObject(path)
-    return result.ok
+    const res = await fetch('/api/storage/delete', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    })
+    const data = await res.json().catch(() => ({}))
+    return data?.success === true
   } catch (error) {
     console.error('Failed to delete file:', error)
     return false
