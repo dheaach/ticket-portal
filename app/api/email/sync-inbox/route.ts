@@ -148,12 +148,14 @@ async function sendUserActivationEmail(params: {
   const changePasswordUrl = `${safeBase}/change-password`
 
   const [tpl] = await db
-    .select({ content: messageTemplates.content })
+    .select({ content: messageTemplates.content, status: messageTemplates.status })
     .from(messageTemplates)
-    .where(and(eq(messageTemplates.key, USER_ACTIVATION_TEMPLATE_KEY), eq(messageTemplates.status, 'active')))
+    .where(eq(messageTemplates.key, USER_ACTIVATION_TEMPLATE_KEY))
     .limit(1)
 
-  const rawTpl = tpl?.content?.trim() ?? ''
+  if (!tpl || tpl.status !== 'active') return
+
+  const rawTpl = tpl.content?.trim() ?? ''
   const mergedTpl = rawTpl
     ? mergeMessageTemplateHtml(rawTpl, {
         origin: safeBase,
@@ -210,12 +212,14 @@ async function sendUserTemporaryPasswordEmail(params: {
   const changePasswordUrl = `${safeBase}/change-password`
 
   const [tpl] = await db
-    .select({ content: messageTemplates.content })
+    .select({ content: messageTemplates.content, status: messageTemplates.status })
     .from(messageTemplates)
-    .where(and(eq(messageTemplates.key, USER_PASSWORD_TEMPLATE_KEY), eq(messageTemplates.status, 'active')))
+    .where(eq(messageTemplates.key, USER_PASSWORD_TEMPLATE_KEY))
     .limit(1)
 
-  const rawTpl = tpl?.content?.trim() ?? ''
+  if (!tpl || tpl.status !== 'active') return
+
+  const rawTpl = tpl.content?.trim() ?? ''
   const mergedTpl = rawTpl
     ? mergeMessageTemplateHtml(rawTpl, {
         origin: safeBase,

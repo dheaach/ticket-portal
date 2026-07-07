@@ -5,7 +5,7 @@ import { google } from 'googleapis'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { companies, db, emailIntegrations,users } from '@/lib/db'
+import { companies, db, emailIntegrations, messageTemplates, users } from '@/lib/db'
 import {
   actorRoleFromSession,
   logSystemActivity,
@@ -39,6 +39,13 @@ async function sendCustomerResetPasswordEmail(params: {
   if (!clientId || !clientSecret) {
     throw new Error('Email integration not configured')
   }
+
+  const [tpl] = await db
+    .select({ status: messageTemplates.status })
+    .from(messageTemplates)
+    .where(eq(messageTemplates.key, 'requester_notification_password_reset'))
+    .limit(1)
+  if (!tpl || tpl.status !== 'active') return
 
   const [integration] = await db
     .select({
