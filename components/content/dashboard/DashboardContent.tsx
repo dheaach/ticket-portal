@@ -306,7 +306,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                 value={stats.totalTeams}
                 prefix={<FolderOutlined />}
                 
-                styles={{ content: { color: '#1890ff' } }}
+                styles={{ content: { color: '#16324A' } }}
               />
             </Card>
           </Col>
@@ -339,7 +339,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                 title="Time today"
                 value={formatTime(trackerStats.todaySeconds)}
                 prefix={<ClockCircleOutlined />}
-                styles={{content:{ color: '#1890ff', fontSize: 18} }}
+                styles={{content:{ color: '#16324A', fontSize: 18} }}
               />
               <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.todayTickets}</Text>
             </Card>
@@ -427,7 +427,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                         <br />
                         <Text
                           strong
-                          style={{ cursor: 'pointer', color: '#1890ff' }}
+                          style={{ cursor: 'pointer', color: '#16324A' }}
                           onClick={() => router.push(`/tickets/${row.ticket_id}`)}
                         >
                           {row.ticket?.title || `#${row.ticket_id}`}
@@ -499,7 +499,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                             <Link
                               href={`/tickets/${item.ticket_id}`}
                               onClick={(e) => e.stopPropagation()}
-                              style={{ color: '#1890ff', fontWeight: 600 }}
+                              style={{ color: '#16324A', fontWeight: 600 }}
                             >
                               {item.ticket?.title || `Ticket #${item.ticket_id}`}
                             </Link>

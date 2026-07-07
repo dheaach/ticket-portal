@@ -79,7 +79,7 @@ export default function CardViewCard({
           )}
           #{ticket.id} {ticket.title}
         </Text>
-        <Text style={{ fontSize: 13, color: '#1890ff', display: 'block' }}>
+        <Text style={{ fontSize: 13, color: '#16324A', display: 'block' }}>
           by {ticket.by_label ?? ticket.creator_name ?? 'Unassigned'}
         </Text>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginTop: 4 }}>
