@@ -1656,6 +1656,7 @@ export default function TicketDetailContent({
                                             commentVisibility={commentVisibility}
                                             onCommentVisibilityChange={setCommentVisibility}
                                             showNoteOption
+                                            currentUserRole={user.role}
                                             nonCustomerUsers={users.filter((u: any) => (u?.role ?? '')?.toLowerCase() !== 'customer')}
                                             companyCustomers={companyCustomers}
                                             attributes={attributes}

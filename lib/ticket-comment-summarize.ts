@@ -45,7 +45,7 @@ export function stripHtmlForPrompt(html: string): string {
 }
 
 /** Max comments sent to OpenAI (oldest-first slice when over limit). */
-export const SUMMARIZE_MAX_COMMENTS = 80
+export const SUMMARIZE_MAX_COMMENTS = 100
 
 // Types moved to lib/ticket-summarize-types.ts (re-exported above)
 import type { LocalizedSummarizeComment, LocalizedSummarizeContext,SummarizeAnchorRequest } from '@/lib/ticket-summarize-types'

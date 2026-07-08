@@ -238,6 +238,7 @@ interface TabGeneralProps {
   onTicketDescriptionSave?: () => void | Promise<void>
   ticketDescriptionSaving?: boolean
   onApplyAiSummaryToDescription?: (html: string) => Promise<void>
+  currentUserRole?: string | null
 }
 
 export default function TabGeneral({
@@ -308,7 +309,9 @@ export default function TabGeneral({
   onTicketDescriptionSave,
   ticketDescriptionSaving = false,
   onApplyAiSummaryToDescription,
+  currentUserRole,
 }: TabGeneralProps) {
+  const canAccessTicketSummary = ['administrator', 'manager'].includes((currentUserRole ?? '').toLowerCase())
   const [sidebarDraft, setSidebarDraft] = useState<SidebarAttributesDraft>(() =>
     snapshotSidebarDraft({
       ticketData,
@@ -435,7 +438,7 @@ export default function TabGeneral({
                             </Text>
                             
                           </Flex>
-                          {showNoteOption && onAddAiSummaryComment && ticketData?.id ? (
+                          {canAccessTicketSummary && showNoteOption && onAddAiSummaryComment && ticketData?.id ? (
                             <CommentAiSummaryTrigger
                               ticketId={ticketData.id}
                               summarizeAnchor={{ type: 'ticket' }}
