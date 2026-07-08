@@ -204,6 +204,16 @@ export default function RecurringTicketsContent({ user }: Props) {
       ),
     },
     {
+      title: 'Priority',
+      key: 'ticketPriority',
+      render: (_: unknown, row: RecurringTicketRow) => {
+        const p = row.ticketPriority && row.ticketPriority > 0 ? row.ticketPriority : null
+        return p
+          ? <Tag color="orange">#{p}</Tag>
+          : <Text type="secondary">—</Text>
+      },
+    },
+    {
       title: 'Frequency',
       key: 'frequency',
       render: (_: unknown, row: RecurringTicketRow) => (
