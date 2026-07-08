@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
     company_id,
     assignee_ids,
     ticket_type_id,
+    contact_user_id,
     visibility = 'public',
   } = body
 
@@ -105,6 +106,7 @@ export async function POST(req: NextRequest) {
       companyId: company_id ?? null,
       assigneeIds: assignee_ids ?? [],
       ticketTypeId: ticket_type_id ?? null,
+      contactUserId: contact_user_id ?? null,
       visibility,
       createdBy: session.user.id,
     })

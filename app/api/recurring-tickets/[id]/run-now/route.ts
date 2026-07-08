@@ -32,6 +32,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         typeId: rule.ticketTypeId ?? null,
         visibility: rule.visibility ?? 'public',
         createdBy: rule.createdBy ?? null,
+        contactUserId: rule.contactUserId ?? null,
         createdVia: 'recurring',
         ticketType: 'support',
       })

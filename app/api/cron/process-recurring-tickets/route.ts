@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
           typeId: rule.ticketTypeId ?? null,
           visibility: rule.visibility ?? 'public',
           createdBy: rule.createdBy ?? null,
+          contactUserId: rule.contactUserId ?? null,
           createdVia: 'recurring',
           ticketType: 'support',
         })

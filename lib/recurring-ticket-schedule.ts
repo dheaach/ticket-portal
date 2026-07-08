@@ -103,8 +103,8 @@ export function computeNextRunAt(
   }
 
   // Walk forward day by day (max 400 days to avoid infinite loop)
-  // Start from tomorrow or startDate, whichever is later
-  let candidate = addDays(after.toISOString().slice(0, 10), 1)
+  // Start from today so a rule created/updated mid-day can still fire today
+  let candidate = after.toISOString().slice(0, 10)
   if (candidate < schedule.startDate) candidate = schedule.startDate
 
   for (let i = 0; i < 400; i++) {
