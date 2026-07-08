@@ -438,17 +438,6 @@ export default function TabGeneral({
                             </Text>
                             
                           </Flex>
-                          {canAccessTicketSummary && showNoteOption && onAddAiSummaryComment && ticketData?.id ? (
-                            <CommentAiSummaryTrigger
-                              ticketId={ticketData.id}
-                              summarizeAnchor={{ type: 'ticket' }}
-                              size="middle"
-                              addCommentLoading={addCommentLoading}
-                              disabled={addCommentLoading || ticketDescriptionSaving}
-                              onAddComment={onAddAiSummaryComment}
-                              onAddChecklistItems={onAddChecklistItemsBulk}
-                            />
-                          ) : null}
                         </Flex>
                         {ticketDescriptionEditing && canEditTicketDescription ? (
                           <Space orientation="vertical" size="small" style={{ width: '100%', marginTop: 8 }}>
@@ -472,8 +461,8 @@ export default function TabGeneral({
                           </Space>
                         ) : (
                           <>
-                            {(onApplyAiSummaryToDescription || onAddAiSummaryComment) && ticketData?.id ? (
-                              <Flex justify="flex-end" gap={8} style={{ marginTop: 4 }}>
+                            {ticketData?.id && (onApplyAiSummaryToDescription || (canAccessTicketSummary && onAddAiSummaryComment)) ? (
+                              <Flex justify="flex-end" gap={8} style={{ marginTop: 4 }} align="center">
                                 {onApplyAiSummaryToDescription ? (
                                   <CommentAiSummaryTrigger
                                     ticketId={ticketData.id}
@@ -481,6 +470,20 @@ export default function TabGeneral({
                                     size="middle"
                                     disabled={ticketDescriptionSaving}
                                     onApplyToDescription={onApplyAiSummaryToDescription}
+                                    tooltip="Summarize description (AI)"
+                                  />
+                                ) : null}
+                                {canAccessTicketSummary && showNoteOption && onAddAiSummaryComment ? (
+                                  <CommentAiSummaryTrigger
+                                    ticketId={ticketData.id}
+                                    summarizeAnchor={{ type: 'ticket' }}
+                                    size="middle"
+                                    addCommentLoading={addCommentLoading}
+                                    disabled={addCommentLoading || ticketDescriptionSaving}
+                                    onAddComment={onAddAiSummaryComment}
+                                    onAddChecklistItems={onAddChecklistItemsBulk}
+                                    tooltip="Summarize full ticket — last 100 messages (Admin/Manager)"
+                                    variant="ticket"
                                   />
                                 ) : null}
                                 {canEditTicketDescription ? (
