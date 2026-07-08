@@ -118,14 +118,14 @@ export default function FeatureAccessContent({ user: currentUser }: Props) {
 
           {/* Table */}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, color: 'var(--ant-color-text)' }}>
               <thead>
-                <tr style={{ background: '#fafafa' }}>
-                  <th colSpan={2} style={{ padding: '10px 16px', textAlign: 'left', borderBottom: '2px solid #f0f0f0', width: '36%', color: '#595959', fontWeight: 600 }}>
+                <tr style={{ background: 'var(--ant-color-fill-quaternary)' }}>
+                  <th colSpan={2} style={{ padding: '10px 16px', textAlign: 'left', borderBottom: '2px solid var(--ant-color-border)', width: '36%', color: 'var(--ant-color-text-secondary)', fontWeight: 600 }}>
                     Feature
                   </th>
                   {ROLES.map((r) => (
-                    <th key={r.key} style={{ padding: '10px 12px', textAlign: 'center', borderBottom: '2px solid #f0f0f0', color: '#595959', fontWeight: 600, minWidth: 110 }}>
+                    <th key={r.key} style={{ padding: '10px 12px', textAlign: 'center', borderBottom: '2px solid var(--ant-color-border)', color: 'var(--ant-color-text-secondary)', fontWeight: 600, minWidth: 110 }}>
                       <Tag color={r.color} style={{ fontWeight: 600, fontSize: 12 }}>{r.label}</Tag>
                     </th>
                   ))}
@@ -137,27 +137,27 @@ export default function FeatureAccessContent({ user: currentUser }: Props) {
                   return rows.map((feature, idx) => (
                     <tr
                       key={feature.name}
-                      style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafafa', transition: 'background 0.15s' }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = '#f0f5ff')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 0 ? '#ffffff' : '#fafafa')}
+                      style={{ background: idx % 2 === 0 ? 'var(--ant-color-bg-container)' : 'var(--ant-color-fill-quaternary)', transition: 'background 0.15s' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ant-color-primary-bg)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 0 ? 'var(--ant-color-bg-container)' : 'var(--ant-color-fill-quaternary)')}
                     >
                       {idx === 0 && (
                         <td
                           rowSpan={rows.length}
                           style={{
                             padding: '0 16px',
-                            borderBottom: '1px solid #f0f0f0',
-                            borderRight: '2px solid #e6f4ff',
+                            borderBottom: '1px solid var(--ant-color-border)',
+                            borderRight: '2px solid var(--ant-color-primary-border)',
                             verticalAlign: 'middle',
-                            background: '#f6f8ff',
+                            background: 'var(--ant-color-primary-bg)',
                           }}
                         >
-                          <Text strong style={{ color: '#1677ff', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          <Text strong style={{ color: 'var(--ant-color-primary)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                             {cat}
                           </Text>
                         </td>
                       )}
-                      <td style={{ padding: '10px 16px', borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{ padding: '10px 16px', borderBottom: '1px solid var(--ant-color-border)', color: 'var(--ant-color-text)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span>{feature.name}</span>
                           {feature.note && (
@@ -166,7 +166,7 @@ export default function FeatureAccessContent({ user: currentUser }: Props) {
                         </div>
                       </td>
                       {ROLES.map((r) => (
-                        <td key={r.key} style={{ padding: '10px 12px', textAlign: 'center', borderBottom: '1px solid #f0f0f0' }}>
+                        <td key={r.key} style={{ padding: '10px 12px', textAlign: 'center', borderBottom: '1px solid var(--ant-color-border)' }}>
                           <AccessIcon access={feature[r.key]} />
                         </td>
                       ))}
