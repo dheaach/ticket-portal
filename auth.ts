@@ -46,7 +46,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       const now = Date.now()
       const mergeProfileFromDb = (
-        refresh: { active: boolean; fullName: string | null; avatarUrl: string | null }
+        refresh: { active: boolean; fullName: string | null; avatarUrl: string | null; mustChangePassword: boolean }
       ) => {
         if (!refresh.active) {
           return {
@@ -90,7 +90,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token
       }
 
-      let refresh: { active: boolean; fullName: string | null; avatarUrl: string | null }
+      let refresh: { active: boolean; fullName: string | null; avatarUrl: string | null; mustChangePassword: boolean }
       try {
         const { fetchUserJwtRefreshData } = await import('@/lib/auth-user-session')
         refresh = await fetchUserJwtRefreshData(uid)
