@@ -230,20 +230,19 @@ async function sendUserTemporaryPasswordEmail(params: {
         ticketId: String(ticketId),
         recipient: recipientMap,
         sender: senderMap,
+        extra: { temporary_password: temporaryPassword, login_url: loginUrl, change_password_url: changePasswordUrl },
         useDomMerge: false,
       })
     : ''
 
   const fallbackHtml =
     `<p>Hello,</p>` +
-    `<p>Here is your temporary password to access your new portal account.</p>`
-
-  const securityBlock =
+    `<p>Here is your temporary password to access your new portal account.</p>` +
     `<p><strong>Temporary password:</strong> <code>${temporaryPassword}</code></p>` +
     `<p>Login here: <a href="${loginUrl}">${loginUrl}</a></p>` +
     `<p>Please change your password immediately after login: <a href="${changePasswordUrl}">${changePasswordUrl}</a></p>`
 
-  const bodyHtml = (mergedTpl || fallbackHtml) + securityBlock
+  const bodyHtml = mergedTpl || fallbackHtml
   const subject = `Your temporary password (Ticket #${ticketId})`
   const subjectMime = encodeSubjectHeader(subject)
   const appSettings2 = await getAppSettings()
