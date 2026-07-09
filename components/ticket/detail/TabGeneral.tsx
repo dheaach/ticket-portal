@@ -65,7 +65,7 @@ function OriginalDescriptionCollapse({ ticketData }: { ticketData: unknown }) {
         style={{ padding: 0, fontSize: 12 }}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? 'Sembunyikan konten asli email' : 'Lihat konten asli email'}
+        {open ? 'Hide original email content' : 'View original email content'}
       </Button>
       {open && (
         <div
@@ -79,7 +79,7 @@ function OriginalDescriptionCollapse({ ticketData }: { ticketData: unknown }) {
           }}
         >
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
-            Konten asli (sebelum diedit)
+            Original content (before edit)
           </Text>
           <div
             className="ql-editor comment-html"
