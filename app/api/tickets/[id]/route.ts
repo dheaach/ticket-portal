@@ -36,6 +36,7 @@ import {
   assertTicketContactUserAllowed,
   getEffectiveCompanyIdForUser,
 } from '@/lib/ticket-contact-user'
+import { sendAgentClosesTicketEmail } from '@/lib/ticket-notification-emails'
 import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-access'
 
 async function triggerTicketUpdatedAutomation(ticketId: number) {
@@ -250,6 +251,14 @@ export async function PATCH(
         }
       } catch (e) {
         console.error('[PATCH ticket status] slack:', e)
+      }
+      if (nextStatus === 'closed' && cur.status !== 'closed' && actorRole !== 'customer') {
+        try {
+          const [closedMeta] = await db.select({ title: tickets.title }).from(tickets).where(eq(tickets.id, ticketId)).limit(1)
+          await sendAgentClosesTicketEmail({ ticketId, ticketTitle: closedMeta?.title || 'Ticket', agentUserId: actorUserId })
+        } catch (e) {
+          console.error('[PATCH ticket status] close email:', e)
+        }
       }
     }
     await triggerTicketUpdatedAutomation(ticketId)

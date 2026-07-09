@@ -28,6 +28,7 @@ import { uploadBuffer } from '@/lib/storage-idrive'
 import { logTicketActivity } from '@/lib/ticket-activity-log'
 import { DEFAULT_TICKET_TYPE } from '@/lib/ticket-classification'
 import { assignCompanySupportTicketRank } from '@/lib/ticket-company-priority-order'
+import { sendNewTicketAgentNotificationEmail } from '@/lib/ticket-notification-emails'
 
 /** Parse Gmail internalDate to ISO string for created_at */
 function getEmailDateIso(msg: { internalDate?: string }): string | null {
@@ -1512,6 +1513,19 @@ export async function POST(request: NextRequest) {
                 senderEmail,
                 (mailErr as Error)?.message
               )
+            }
+          }
+
+          if (newTicket.teamId && creatorUserId) {
+            try {
+              await sendNewTicketAgentNotificationEmail({
+                ticketId: newTicket.id,
+                ticketTitle: title,
+                teamId: newTicket.teamId,
+                creatorUserId,
+              })
+            } catch (mailErr) {
+              console.error('[Sync] agent new ticket notification email failed:', (mailErr as Error)?.message)
             }
           }
 

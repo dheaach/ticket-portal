@@ -24,6 +24,7 @@ import { bumpTicketDataVersion } from '@/lib/firebase/ticket-sync-server'
 import { mergeMessageTemplateHtml, userRowToMergeMap } from '@/lib/message-template-merge'
 import { notifySlackTicketEvent } from '@/lib/slack-ticket-notify'
 import { logTicketActivity } from '@/lib/ticket-activity-log'
+import { sendNoteAddedNotificationEmail } from '@/lib/ticket-notification-emails'
 
 const AGENT_REQUESTER_REPLIES_TEMPLATE_KEY = 'agent_notification_requester_replies' as const
 
@@ -511,6 +512,30 @@ export async function POST(
       })
     } catch (err) {
       console.error('[comments] team email notify:', err)
+    }
+  }
+
+  if (effectiveVisibility === 'note') {
+    try {
+      const [ticketForNote] = await db
+        .select({ title: tickets.title })
+        .from(tickets)
+        .where(eq(tickets.id, ticketId))
+        .limit(1)
+      const notePreview = (comment || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 300)
+      await sendNoteAddedNotificationEmail({
+        ticketId,
+        ticketTitle: ticketForNote?.title || 'Ticket',
+        notePreview,
+        noteHtml: comment || undefined,
+        actorUserId: authUser.id,
+      })
+    } catch (err) {
+      console.error('[comments] note email notify:', err)
     }
   }
 
