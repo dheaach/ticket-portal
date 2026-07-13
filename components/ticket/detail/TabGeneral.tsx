@@ -151,6 +151,7 @@ export interface SidebarAttributesDraft {
   contactUserId: string | null
   dueDate: string | null
   teamId: string | null
+  assigneeIds: string[]
   /** Local short note text; persisted with Save changes */
   shortNote: string
 }
@@ -169,6 +170,9 @@ function snapshotSidebarDraft(params: {
     selectedTeamId,
     shortNoteProp,
   } = params
+  const assigneeIds: string[] = Array.isArray(ticketData?.assignees)
+    ? ticketData.assignees.map((a: { user_id?: string; user?: { id?: string } }) => a.user_id ?? a.user?.id ?? '').filter(Boolean)
+    : []
   return {
     status: String(ticketData?.status ?? 'open'),
     projectStatusId: ticketData?.project_status_id ?? null,
@@ -179,6 +183,7 @@ function snapshotSidebarDraft(params: {
     contactUserId: selectedContactUserId ?? null,
     dueDate: ticketData?.due_date ? String(ticketData.due_date) : null,
     teamId: selectedTeamId ?? null,
+    assigneeIds,
     shortNote: typeof shortNoteProp === 'string' ? shortNoteProp : '',
   }
 }
@@ -188,6 +193,7 @@ function sidebarDraftEquals(a: SidebarAttributesDraft, b: SidebarAttributesDraft
     JSON.stringify({
       ...d,
       tagIds: [...d.tagIds].slice().sort(),
+      assigneeIds: [...d.assigneeIds].slice().sort(),
     })
   return norm(a) === norm(b)
 }
@@ -1085,6 +1091,36 @@ export default function TabGeneral({
                 />
               ) : (
                 <Text>{ticketData.team?.name ?? '—'}</Text>
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Assignees">
+              {canEditAssignees ? (
+                <Select
+                  mode="multiple"
+                  value={sidebarDraft.assigneeIds}
+                  onChange={(ids) =>
+                    setSidebarDraft((d) => ({ ...d, assigneeIds: ids ?? [] }))
+                  }
+                  loading={sidebarAttributesSaving}
+                  options={(nonCustomerUsers ?? []).map((u) => ({
+                    value: u.id,
+                    label: u.full_name ? `${u.full_name} (${u.email})` : u.email,
+                  }))}
+                  style={{ minWidth: 160, width: '100%' }}
+                  placeholder="Select assignees"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                />
+              ) : (
+                <Text>
+                  {sidebarDraft.assigneeIds.length > 0
+                    ? (nonCustomerUsers ?? [])
+                        .filter((u) => sidebarDraft.assigneeIds.includes(u.id))
+                        .map((u) => u.full_name || u.email)
+                        .join(', ') || '—'
+                    : '—'}
+                </Text>
               )}
             </Descriptions.Item>
             {/* <Descriptions.Item label="Created At">
