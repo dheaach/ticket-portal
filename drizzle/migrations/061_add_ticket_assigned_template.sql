@@ -12,4 +12,4 @@ VALUES (
 <p>{{ ticket }}</p>
 <p><a href="{{ ticket_link }}">View Ticket</a></p>'
 )
-ON CONFLICT (key) DO NOTHING;
+WHERE NOT EXISTS (SELECT 1 FROM message_templates WHERE key = 'agent_notification_ticket_assigned_agent');
