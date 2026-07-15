@@ -2,7 +2,7 @@
 
 import { ArrowLeftOutlined, EyeOutlined,SaveOutlined } from '@ant-design/icons'
 import { Button, Card, Input, Layout, message, Space, Spin,Typography } from 'antd'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback,useEffect, useState } from 'react'
 
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
@@ -35,6 +35,7 @@ export default function MessageTemplateEditContent({
   templateId,
 }: MessageTemplateEditContentProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [collapsed, setCollapsed] = useState(false)
   const [row, setRow] = useState<MessageTemplateRow | null>(null)
   const [content, setContent] = useState('')
@@ -90,7 +91,11 @@ export default function MessageTemplateEditContent({
       })
       setRow(updated)
       message.success('Template saved')
-      router.push('/settings/message-templates')
+      const fromTab = searchParams.get('from_tab') ?? updated.group
+      const backUrl = fromTab
+        ? `/settings/message-templates?tab=${encodeURIComponent(fromTab)}`
+        : '/settings/message-templates'
+      router.push(backUrl)
     } catch (e: unknown) {
       message.error((e as Error).message || 'Save failed')
     } finally {
@@ -106,7 +111,13 @@ export default function MessageTemplateEditContent({
           <Card>
             <Space direction="vertical" size="large" style={{ width: '100%' }}>
               <Space wrap>
-                <Button icon={<ArrowLeftOutlined />} onClick={() => router.push('/settings/message-templates')}>
+                <Button icon={<ArrowLeftOutlined />} onClick={() => {
+                  const fromTab = searchParams.get('from_tab')
+                  const backUrl = fromTab
+                    ? `/settings/message-templates?tab=${encodeURIComponent(fromTab)}`
+                    : '/settings/message-templates'
+                  router.push(backUrl)
+                }}>
                   Back to list
                 </Button>
               </Space>
@@ -206,7 +217,13 @@ export default function MessageTemplateEditContent({
                     >
                       Save and return to list
                     </Button>
-                    <Button onClick={() => router.push('/settings/message-templates')}>Cancel</Button>
+                    <Button onClick={() => {
+                      const fromTab = searchParams.get('from_tab') ?? row?.group
+                      const backUrl = fromTab
+                        ? `/settings/message-templates?tab=${encodeURIComponent(fromTab)}`
+                        : '/settings/message-templates'
+                      router.push(backUrl)
+                    }}>Cancel</Button>
                   </Space>
 
                   <MessageTemplatePreviewModal
