@@ -330,6 +330,8 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
       title: 'Team Name',
       dataIndex: 'name',
       key: 'name',
+      sorter: (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      defaultSortOrder: 'ascend',
       render: (name: string, record: TeamRecord) => (
         <Link href={`/settings/teams/${record.id}`} style={{ fontWeight: 600 }}>
           {name}
@@ -390,22 +392,15 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
         <Space>
           <Tooltip title="View team detail">
             <Link href={`/settings/teams/${record.id}`}>
-              <Button type="default" icon={<EyeOutlined />}> Details</Button>
+              <Button type="default" icon={<EyeOutlined />} />
             </Link>
           </Tooltip>
           <Tooltip title="Manage Members">
-            <Button
-              icon={<UserAddOutlined />}
-              onClick={() => openMembersModal(record)}
-            >
-              Members
-            </Button>
+            <Button icon={<UserAddOutlined />} onClick={() => openMembersModal(record)} />
           </Tooltip>
           {isAdmin && (
             <Tooltip title="Edit team">
-              <Button type="default" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-                Edit
-              </Button>
+              <Button type="default" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
             </Tooltip>
           )}
           {isAdmin && (
@@ -417,9 +412,7 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
               cancelText="No"
             >
               <Tooltip title="Delete">
-                <Button type="primary" danger icon={<DeleteOutlined />}>
-                  Delete
-                </Button>
+                <Button type="primary" danger icon={<DeleteOutlined />} />
               </Tooltip>
             </Popconfirm>
           )}
