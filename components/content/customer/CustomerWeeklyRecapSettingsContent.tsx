@@ -150,7 +150,7 @@ export default function CustomerWeeklyRecapSettingsContent({ user: currentUser }
   const [collapsed, setCollapsed] = useState(false)
   const [range, setRange] = useState<[Dayjs, Dayjs]>(() => {
     const end = dayjs().endOf('day')
-    const start = end.subtract(12, 'week').startOf('isoWeek').startOf('day')
+    const start = dayjs().startOf('month')
     return [start, end]
   })
   const [loading, setLoading] = useState(false)

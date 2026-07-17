@@ -244,7 +244,7 @@ export async function GET(request: Request) {
             .leftJoin(tags, eq(ticketTags.tagId, tags.id))
             .where(inArray(ticketTags.ticketId, ticketIds)),
           db
-            .select({ ticketId: ticketComments.ticketId, createdAt: ticketComments.createdAt })
+            .select({ ticketId: ticketComments.ticketId, createdAt: ticketComments.receivedAt })
             .from(ticketComments)
             .where(and(eq(ticketComments.visibility, 'reply'), inArray(ticketComments.ticketId, ticketIds))),
           db
@@ -356,7 +356,7 @@ export async function GET(request: Request) {
         ? { id: r.company.id, name: r.company.name, color: r.company.color, email: r.company.email }
         : null,
       creator_name: creatorName,
-      by_label: companyName || creatorName,
+      by_label: creatorName || companyName,
       team_name: r.team?.name ?? null,
       tags: tagsByTicket[t.id] || [],
       assignees: assigneesByTicket[t.id] || [],

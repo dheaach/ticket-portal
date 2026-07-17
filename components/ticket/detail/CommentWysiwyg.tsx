@@ -60,6 +60,8 @@ interface CommentWysiwygProps {
   useSemanticHTML?: boolean
   /** Auto-link http(s) URLs on paste and blur (default true). */
   autoLinkify?: boolean
+  /** Focus the editor immediately after it mounts (default false). */
+  autoFocus?: boolean
 }
 
 export default function CommentWysiwyg({
@@ -71,6 +73,7 @@ export default function CommentWysiwyg({
   ticketId,
   useSemanticHTML = false,
   autoLinkify = true,
+  autoFocus = false,
 }: CommentWysiwygProps) {
   const { resolved } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -152,6 +155,15 @@ export default function CommentWysiwyg({
       setMounted(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (!mounted || !autoFocus) return
+    const t = window.setTimeout(() => {
+      const editor = quillRef.current?.getEditor() as (QuillEditor & { focus?: () => void }) | undefined
+      editor?.focus?.()
+    }, 50)
+    return () => window.clearTimeout(t)
+  }, [mounted, autoFocus])
 
   /** After paste, linkify bare URLs in the editor HTML. */
   useEffect(() => {

@@ -522,11 +522,12 @@ export async function PATCH(
     nextTicketTypeResolved === DEFAULT_TICKET_TYPE &&
     nextCompanyResolved != null
 
-  /** Company queue or creator-only queue (customer tickets without company). */
+  /** Company queue or creator-only queue (open support tickets only). */
   const priorityRankReorder =
     priority !== undefined &&
     !closingForSupportQueue &&
-    nextTicketTypeResolved === DEFAULT_TICKET_TYPE
+    nextTicketTypeResolved === DEFAULT_TICKET_TYPE &&
+    beforeSnapshot.status !== 'closed'
 
   const compactAfterLeavingSupport =
     ticket_type !== undefined &&

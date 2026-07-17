@@ -528,6 +528,7 @@ export default function TabGeneral({
                               ticketId={ticketData?.id}
                               placeholder="Ticket description..."
                               height="220px"
+                              autoFocus
                             />
                             <Flex gap={8} wrap="wrap">
                               <Button

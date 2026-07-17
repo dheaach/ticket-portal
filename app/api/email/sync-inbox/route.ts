@@ -606,7 +606,7 @@ export async function POST(request: NextRequest) {
     const sinceSeconds = lastSyncAt
       ? Math.floor(lastSyncAt.getTime() / 1000)
       : twoDaysAgo
-    const searchQuery = `is:inbox after:${sinceSeconds}`
+    const searchQuery = `(is:inbox OR in:spam) after:${sinceSeconds}`
 
     // Paginate to fetch all matching messages (Gmail defaults to max 50 per page)
     const messages: { id: string }[] = []
@@ -644,7 +644,7 @@ export async function POST(request: NextRequest) {
       console.log('[Sync] totalFromGmail:', messages.length, '| alreadyInDb:', alreadyCount, '| toProcess:', messages.length - alreadyCount)
     }
 
-    const fetched: { msg: any; id: string; threadId: string | null }[] = []
+    const fetched: { msg: any; id: string; threadId: string | null; isSpam: boolean }[] = []
     for (const msgRef of messages) {
       if (alreadyProcessed.has(msgRef.id!)) continue
       const msgRes = await gmail.users.messages.get({
@@ -656,6 +656,7 @@ export async function POST(request: NextRequest) {
         msg: msgRes.data,
         id: msgRef.id!,
         threadId: msgRes.data.threadId || null,
+        isSpam: Array.isArray(msgRes.data.labelIds) && msgRes.data.labelIds.includes('SPAM'),
       })
     }
     fetched.sort((a, b) => {
@@ -664,7 +665,7 @@ export async function POST(request: NextRequest) {
       return dateA - dateB
     })
 
-    for (const { msg, id: gmailMessageId, threadId: msgThreadId } of fetched) {
+    for (const { msg, id: gmailMessageId, threadId: msgThreadId, isSpam } of fetched) {
       const headers = (msg.payload?.headers || []) as { name: string; value: string }[]
       const getHeader = (name: string) =>
         headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
@@ -1364,7 +1365,7 @@ export async function POST(request: NextRequest) {
                   visibility: 'public',
                   companyId: ticketCompanyId,
                   createdVia: 'email',
-                  ticketType: DEFAULT_TICKET_TYPE,
+                  ticketType: isSpam ? 'spam' : DEFAULT_TICKET_TYPE,
                   /** NULL first; then append to end of company queue (avoids unique company_id+priority clash). */
                   priority: ticketCompanyId ? null : 0,
                   ...(emailDateIso && { createdAt: new Date(emailDateIso) }),

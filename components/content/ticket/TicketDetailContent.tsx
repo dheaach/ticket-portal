@@ -242,7 +242,7 @@ export default function TicketDetailContent({
     const [newDescriptionAttachments, setNewDescriptionAttachments] = useState<{ url: string; file_name: string; file_path: string }[]>([])
     const [deletedDescriptionAttachmentIds, setDeletedDescriptionAttachmentIds] = useState<string[]>([])
     const [statusChanging, setStatusChanging] = useState(false)
-    const [typeChanging, setTypeChanging] = useState(false)
+    const [customerChangesSaving, setCustomerChangesSaving] = useState(false)
     const [form] = Form.useForm()
     const [activeTimeTracker, setActiveTimeTracker] = useState<any>(null)
     const [timeTrackerSessions, setTimeTrackerSessions] = useState<any[]>([])
@@ -1106,25 +1106,28 @@ export default function TicketDetailContent({
         }
     }
 
-    const handleTypeChange = async (typeId: number | null) => {
-        setTypeChanging(true)
+    const handleSaveCustomerChanges = async (changes: { type_id?: number | null; priority?: number | null }) => {
+        setCustomerChangesSaving(true)
         try {
             await apiFetch(`/api/tickets/${displayTicket.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type_id: typeId }),
+                body: JSON.stringify(changes),
             })
-            message.success('Type updated')
+            message.success('Changes saved')
             setDisplayTicket((prev: any) => ({
                 ...prev,
-                type_id: typeId,
-                type: typeId != null ? ticketTypes.find((t) => t.id === typeId) ?? null : null,
+                ...(changes.type_id !== undefined && {
+                    type_id: changes.type_id,
+                    type: changes.type_id != null ? ticketTypes.find((t) => t.id === changes.type_id) ?? null : null,
+                }),
+                ...(changes.priority !== undefined && { priority: changes.priority }),
             }))
             router.refresh()
         } catch (err: unknown) {
-            message.error(err instanceof Error ? err.message : 'Failed to update type')
+            message.error(err instanceof Error ? err.message : 'Failed to save changes')
         } finally {
-            setTypeChanging(false)
+            setCustomerChangesSaving(false)
         }
     }
 
@@ -1558,8 +1561,8 @@ export default function TicketDetailContent({
                                 onStatusChange={handleStatusChange}
                                 statusChanging={statusChanging}
                                 typeOptions={ticketTypes}
-                                onTypeChange={handleTypeChange}
-                                typeChanging={typeChanging}
+                                onSaveChanges={handleSaveCustomerChanges}
+                                savingChanges={customerChangesSaving}
                                 totalTimeSeconds={totalTimeSeconds}
                                 activeTimeTracker={activeTimeTracker}
                                 currentTime={currentTime}

@@ -1024,6 +1024,20 @@ html.dark .deskteam-app-sidebar .ant-menu-dark .ant-menu-item-selected .admin-si
   width: 100%;
   max-width: 100%;
 }
+.app-table .ant-table-pagination.ant-pagination {
+  margin-bottom: 0 !important;
+  padding: 12px 16px 16px !important;
+}
+
+/* Companies table — customer with no active time */
+.ant-table-tbody > tr.company-row--no-active-time > td,
+.ant-table-tbody > tr.company-row--no-active-time > td.ant-table-cell {
+  background-color: rgba(255, 77, 79, 0.12) !important;
+}
+.ant-table-tbody > tr.company-row--no-active-time:hover > td,
+.ant-table-tbody > tr.company-row--no-active-time:hover > td.ant-table-cell {
+  background-color: rgba(255, 77, 79, 0.2) !important;
+}
 
 /* Ticket detail — General tab attribute sidebar */
 .ticket-detail-sidebar-sticky {

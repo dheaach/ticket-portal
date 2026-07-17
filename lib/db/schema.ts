@@ -297,6 +297,8 @@ export const ticketComments = pgTable('ticket_comments', {
   ccEmails: text('cc_emails').array(),
   bccEmails: text('bcc_emails').array(),
   createdAt: ts('created_at').notNull().defaultNow(),
+  /** Wall-clock time when the row was actually inserted into the DB. Never back-dated (unlike createdAt for email imports). Used for unread-dot logic. */
+  receivedAt: ts('received_at').notNull().defaultNow(),
 })
 
 /** One saved AI summary per anchor (per comment, description, or ticket header). */

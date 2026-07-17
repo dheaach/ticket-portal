@@ -292,11 +292,34 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
           <Col xs={24} sm={12} lg={6}>
             <Card>
               <Statistic
-                title="Total Users"
-                value={stats.totalUsers}
-                prefix={<TeamOutlined />}
-                styles={{ content: { color: '#3f8600' } }}
+                title="Time today"
+                value={formatTime(trackerStats.todaySeconds)}
+                prefix={<ClockCircleOutlined />}
+                styles={{ content: { color: '#1890ff', fontSize: 18 } }}
               />
+              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.todayTickets}</Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <Card>
+              <Statistic
+                title="Time this week"
+                value={formatTime(trackerStats.weekSeconds)}
+                prefix={<ClockCircleOutlined />}
+                styles={{ content: { color: '#52c41a', fontSize: 18 } }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.weekTickets}</Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <Card>
+              <Statistic
+                title="Time this month"
+                value={formatTime(trackerStats.monthSeconds)}
+                prefix={<ClockCircleOutlined />}
+                styles={{ content: { color: '#722ed1', fontSize: 18 } }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.monthTickets}</Text>
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -305,79 +328,8 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                 title="Total Teams"
                 value={stats.totalTeams}
                 prefix={<FolderOutlined />}
-                
-                styles={{ content: { color: '#1890ff' } }}
+                styles={{ content: { color: '#fa8c16' } }}
               />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Completed Tickets"
-                value={stats.completedTickets}
-                prefix={<CheckCircleOutlined />}
-                styles={{ content: { color: '#52c41a' } }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Total Tickets"
-                value={stats.totalTickets}
-                prefix={<FileTextOutlined />}
-                styles={{ content: { color: '#722ed1' } }}
-              />
-            </Card>
-          </Col>
-        </Row>
-
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24} sm={12} md={6}>
-            <Card>
-              <Statistic
-                title="Time today"
-                value={formatTime(trackerStats.todaySeconds)}
-                prefix={<ClockCircleOutlined />}
-                styles={{content:{ color: '#1890ff', fontSize: 18} }}
-              />
-              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.todayTickets}</Text>
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Card>
-              <Statistic
-                title="Time this week"
-                value={formatTime(trackerStats.weekSeconds)}
-                prefix={<ClockCircleOutlined />}
-                styles={{ content:{color: '#52c41a', fontSize: 18} }}
-              />
-              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.weekTickets}</Text>
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Card>
-              <Statistic
-                title="Time this month"
-                value={formatTime(trackerStats.monthSeconds)}
-                prefix={<ClockCircleOutlined />}
-                styles={{content:{ color: '#722ed1', fontSize: 18 }}}
-
-              />
-              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.monthTickets}</Text>
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Card>
-              <Statistic
-                title="Tickets worked (variety)"
-                value={trackerStats.monthTickets}
-                suffix="this month"
-                prefix={<FileTextOutlined />}
-                
-                styles={{ content:{color: '#fa8c16', fontSize: 18} }}
-              />
-               <Text type="secondary" style={{ fontSize: 12 }}>Last Month Tickets: {trackerStats.lastMonthTickets}</Text>
             </Card>
           </Col>
         </Row>
