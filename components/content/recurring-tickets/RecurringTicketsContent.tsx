@@ -268,7 +268,6 @@ export default function RecurringTicketsContent({ user }: Props) {
         <Space>
           <Tooltip title="Run now — create ticket immediately">
             <Button
-              size="small"
               type="primary"
               icon={<ThunderboltOutlined />}
               loading={running === row.id}
@@ -277,21 +276,18 @@ export default function RecurringTicketsContent({ user }: Props) {
           </Tooltip>
           <Tooltip title="View run history">
             <Button
-              size="small"
               icon={<EyeOutlined />}
               onClick={() => setRunsDrawer(row)}
             />
           </Tooltip>
           <Tooltip title="Edit">
             <Button
-              size="small"
               icon={<EditOutlined />}
               onClick={() => { setEditing(row); setFormOpen(true) }}
             />
           </Tooltip>
           <Tooltip title="Delete">
             <Button
-              size="small"
               danger
               icon={<DeleteOutlined />}
               onClick={() => handleDelete(row)}

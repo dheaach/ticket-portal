@@ -1,7 +1,8 @@
 'use client'
 
-import { DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, TeamOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, EyeOutlined, MinusCircleOutlined, PlusOutlined, TeamOutlined, UserAddOutlined } from '@ant-design/icons'
 import {
+  Avatar,
   Button,
   Card,
   Col,
@@ -15,6 +16,7 @@ import {
   Row,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
   Tooltip,
@@ -108,6 +110,8 @@ interface TeamPlanGroup {
   rows: CompanyActivePlanRow[]
 }
 
+interface UserOption { id: string; label: string }
+
 export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
   const isAdmin = canAdminTeams(currentUser.role)
   const [collapsed, setCollapsed] = useState(false)
@@ -118,6 +122,15 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
   const [editingTeam, setEditingTeam] = useState<TeamRecord | null>(null)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+
+  // Members modal state
+  const [membersTeam, setMembersTeam] = useState<TeamRecord | null>(null)
+  const [membersList, setMembersList] = useState<TeamMember[]>([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [userOptions, setUserOptions] = useState<UserOption[]>([])
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
+  const [addingMembers, setAddingMembers] = useState(false)
+  const [removingId, setRemovingId] = useState<string | null>(null)
 
   const fetchTeams = async () => {
     setLoading(true)
@@ -241,6 +254,77 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
     }
   }
 
+  const openMembersModal = async (team: TeamRecord) => {
+    setMembersTeam(team)
+    setSelectedUserIds([])
+    setMembersLoading(true)
+    try {
+      const [membersRes, usersRes] = await Promise.all([
+        apiFetch<TeamMember[]>(`/api/teams/${team.id}/members`),
+        apiFetch<{ data?: UserOption[] } | UserOption[]>('/api/users?limit=500'),
+      ])
+      setMembersList(membersRes)
+      const rawUsers = Array.isArray(usersRes) ? usersRes : ((usersRes as { data?: UserOption[] }).data ?? [])
+      setUserOptions(
+        (rawUsers as Array<{ id: string; full_name?: string; email?: string }>).map((u) => ({
+          id: u.id,
+          label: (u.full_name || u.email || u.id),
+        }))
+      )
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : 'Failed to load members')
+    } finally {
+      setMembersLoading(false)
+    }
+  }
+
+  const handleAddMembers = async () => {
+    if (!membersTeam || selectedUserIds.length === 0) return
+    setAddingMembers(true)
+    try {
+      const res = await apiFetch<{ added: number; members: TeamMember[] }>(
+        `/api/teams/${membersTeam.id}/members`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_ids: selectedUserIds }),
+        }
+      )
+      setMembersList(res.members)
+      setSelectedUserIds([])
+      setTeams((prev) =>
+        prev.map((t) =>
+          t.id === membersTeam.id ? { ...t, member_count: res.members.length } : t
+        )
+      )
+      message.success(`Added ${res.added} member(s)`)
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : 'Failed to add members')
+    } finally {
+      setAddingMembers(false)
+    }
+  }
+
+  const handleRemoveMember = async (member: TeamMember) => {
+    if (!membersTeam) return
+    setRemovingId(member.id)
+    try {
+      await apiFetch(`/api/teams/${membersTeam.id}/members/${member.id}`, { method: 'DELETE' })
+      const updated = membersList.filter((m) => m.id !== member.id)
+      setMembersList(updated)
+      setTeams((prev) =>
+        prev.map((t) =>
+          t.id === membersTeam.id ? { ...t, member_count: updated.length } : t
+        )
+      )
+      message.success('Member removed')
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : 'Failed to remove member')
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
   const columns: ColumnsType<TeamRecord> = [
     {
       title: 'Team Name',
@@ -271,9 +355,20 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
       title: 'Members',
       key: 'members',
       render: (_, record) => (
-        <Space>
-          <TeamOutlined />
-          <span>{record.member_count || 0} member(s)</span>
+        <Space wrap size={4}>
+          {(record.members ?? []).slice(0, 4).map((m) => (
+            <Tooltip key={m.id} title={m.user_name}>
+              <Avatar size="small" style={{ background: '#9155FD', fontSize: 11 }}>
+                {(m.user_name ?? '?')[0].toUpperCase()}
+              </Avatar>
+            </Tooltip>
+          ))}
+          {(record.member_count ?? 0) > 4 && (
+            <Avatar size="small" style={{ background: '#d9d9d9', color: '#555', fontSize: 11 }}>
+              +{(record.member_count ?? 0) - 4}
+            </Avatar>
+          )}
+          {(record.member_count ?? 0) === 0 && <Text type="secondary">—</Text>}
         </Space>
       ),
     },
@@ -295,19 +390,17 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
         <Space>
           <Tooltip title="View team detail">
             <Link href={`/settings/teams/${record.id}`}>
-              <Button type="default" icon={<EyeOutlined />}> Details</Button> 
+              <Button type="default" icon={<EyeOutlined />}> Details</Button>
             </Link>
           </Tooltip>
-          {/* <Tooltip title="Manage Members">
+          <Tooltip title="Manage Members">
             <Button
-              type="primary"
               icon={<UserAddOutlined />}
-            
-              onClick={() => handleManageMembers(record)}
+              onClick={() => openMembersModal(record)}
             >
               Members
             </Button>
-          </Tooltip> */}
+          </Tooltip>
           {isAdmin && (
             <Tooltip title="Edit team">
               <Button type="default" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
@@ -524,6 +617,105 @@ export default function TeamsContent({ user: currentUser }: TeamsContentProps) {
 
         </Content>
       </AdminMainColumn>
+
+      {/* Manage Members Modal */}
+      <Modal
+        title={<Space><TeamOutlined />{membersTeam?.name} — Members</Space>}
+        open={!!membersTeam}
+        onCancel={() => setMembersTeam(null)}
+        footer={null}
+        width={560}
+        destroyOnHidden
+      >
+        {membersLoading ? (
+          <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Add members */}
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>Add members</Text>
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  mode="multiple"
+                  placeholder="Select users to add…"
+                  value={selectedUserIds}
+                  onChange={setSelectedUserIds}
+                  style={{ flex: 1 }}
+                  showSearch
+                  optionFilterProp="label"
+                  options={userOptions
+                    .filter((u) => !membersList.some((m) => m.user_id === u.id))
+                    .map((u) => ({ value: u.id, label: u.label }))}
+                />
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  loading={addingMembers}
+                  disabled={selectedUserIds.length === 0}
+                  onClick={handleAddMembers}
+                >
+                  Add
+                </Button>
+              </Space.Compact>
+            </div>
+
+            {/* Current members list */}
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                Current members ({membersList.length})
+              </Text>
+              {membersList.length === 0 ? (
+                <Text type="secondary">No members yet.</Text>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {membersList.map((m) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        border: '1px solid var(--ant-color-border-secondary, #f0f0f0)',
+                      }}
+                    >
+                      <Space>
+                        <Avatar size="small" style={{ background: '#9155FD', fontSize: 11 }}>
+                          {(m.user_name ?? '?')[0].toUpperCase()}
+                        </Avatar>
+                        <div>
+                          <Text strong style={{ fontSize: 13 }}>{m.user_name}</Text>
+                          {m.user_email && (
+                            <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{m.user_email}</Text>
+                          )}
+                        </div>
+                        <Tag color="default" style={{ fontSize: 11 }}>{m.role}</Tag>
+                      </Space>
+                      <Popconfirm
+                        title="Remove member?"
+                        description={`Remove ${m.user_name} from this team?`}
+                        onConfirm={() => handleRemoveMember(m)}
+                        okText="Remove"
+                        okButtonProps={{ danger: true }}
+                        cancelText="Cancel"
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          icon={<MinusCircleOutlined />}
+                          loading={removingId === m.id}
+                          size="small"
+                        />
+                      </Popconfirm>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </Layout>
   )
 }
