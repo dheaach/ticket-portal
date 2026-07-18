@@ -19,7 +19,7 @@ function ThemedConfig({ children }: { children: React.ReactNode }) {
       theme={{
         algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
-          colorPrimary: '#667eea',
+          colorPrimary: '#16324A',
           borderRadius: 8,
           ...(isDark
             ? {

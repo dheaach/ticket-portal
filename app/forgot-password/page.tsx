@@ -46,7 +46,7 @@ export default function ForgotPasswordPage() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          background: 'linear-gradient(135deg, #64BCE9 0%, #16324A 100%)',
           padding: '20px',
         }}
       >
