@@ -446,8 +446,8 @@ function replaceContentIdsInHtml(html: string, cidToUrl: Map<string, string>): s
 }
 
 /**
- * Unduh part Gmail (attachmentId / gambar inline), unggah ke storage,
- * ganti cid: di HTML dengan URL publik, dan kumpulkan file untuk ticket_attachments / comment_attachments.
+ * Download Gmail parts (attachmentId / inline images), upload to storage,
+ * replace cid: in HTML with public URLs, and collect files for ticket_attachments / comment_attachments.
  */
 async function processIncomingEmailMedia(
   gmail: any,
@@ -600,13 +600,13 @@ export async function POST(request: NextRequest) {
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
 
-    // Fetch only since last sync (atau 2 hari untuk first sync)
+    // Fetch only since last sync (or 2 days for first sync)
     const lastSyncAt = integration.lastSyncAt ? new Date(integration.lastSyncAt) : null
     const twoDaysAgo = Math.floor((Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000)
     const sinceSeconds = lastSyncAt
       ? Math.floor(lastSyncAt.getTime() / 1000)
       : twoDaysAgo
-    const searchQuery = `is:inbox after:${sinceSeconds}`
+    const searchQuery = `(is:inbox OR in:spam) after:${sinceSeconds}`
 
     // Paginate to fetch all matching messages (Gmail defaults to max 50 per page)
     const messages: { id: string }[] = []
@@ -644,7 +644,7 @@ export async function POST(request: NextRequest) {
       console.log('[Sync] totalFromGmail:', messages.length, '| alreadyInDb:', alreadyCount, '| toProcess:', messages.length - alreadyCount)
     }
 
-    const fetched: { msg: any; id: string; threadId: string | null }[] = []
+    const fetched: { msg: any; id: string; threadId: string | null; isSpam: boolean }[] = []
     for (const msgRef of messages) {
       if (alreadyProcessed.has(msgRef.id!)) continue
       const msgRes = await gmail.users.messages.get({
@@ -656,6 +656,7 @@ export async function POST(request: NextRequest) {
         msg: msgRes.data,
         id: msgRef.id!,
         threadId: msgRes.data.threadId || null,
+        isSpam: Array.isArray(msgRes.data.labelIds) && msgRes.data.labelIds.includes('SPAM'),
       })
     }
     fetched.sort((a, b) => {
@@ -664,7 +665,7 @@ export async function POST(request: NextRequest) {
       return dateA - dateB
     })
 
-    for (const { msg, id: gmailMessageId, threadId: msgThreadId } of fetched) {
+    for (const { msg, id: gmailMessageId, threadId: msgThreadId, isSpam } of fetched) {
       const headers = (msg.payload?.headers || []) as { name: string; value: string }[]
       const getHeader = (name: string) =>
         headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
@@ -1364,7 +1365,7 @@ export async function POST(request: NextRequest) {
                   visibility: 'public',
                   companyId: ticketCompanyId,
                   createdVia: 'email',
-                  ticketType: DEFAULT_TICKET_TYPE,
+                  ticketType: isSpam ? 'spam' : DEFAULT_TICKET_TYPE,
                   /** NULL first; then append to end of company queue (avoids unique company_id+priority clash). */
                   priority: ticketCompanyId ? null : 0,
                   ...(emailDateIso && { createdAt: new Date(emailDateIso) }),

@@ -6,7 +6,7 @@ import { canAccessMyTeams } from '@/lib/auth-utils'
 import { db, teamMembers, tickets, ticketTimeTracker, users } from '@/lib/db'
 import { loadActiveJobTypeTitleMap } from '@/lib/job-types-db'
 import { accumulateSession, roundHourly, type SessionLike } from '@/lib/my-teams-activity-aggregate'
-import { localYmd, validateMyTeamsActivityDayWindow } from '@/lib/my-teams-date'
+import { localDayBoundsFromYmd, localYmd, validateMyTeamsActivityDayWindow } from '@/lib/my-teams-date'
 import { reportedDurationSeconds } from '@/lib/time-tracker-reported'
 
 function sessionRole(session: { user?: { role?: string } } | null) {
@@ -102,7 +102,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ team
     .orderBy(desc(ticketTimeTracker.startTime))
     .limit(800)
 
+  // Build list of calendar dates in the range (local YYYY-MM-DD)
+  const rangeDates: string[] = []
+  const cursorDate = new Date(dayStart)
+  while (cursorDate.getTime() <= dayEnd.getTime()) {
+    rangeDates.push(localYmd(cursorDate))
+    cursorDate.setDate(cursorDate.getDate() + 1)
+  }
+  const isMultiDay = rangeDates.length > 1
+
   const teamHourly = Array.from({ length: 24 }, () => 0)
+  const teamDailySeconds = new Map<string, number>(rangeDates.map((d) => [d, 0]))
+  // memberDailySeconds: userId -> (date -> seconds)
+  const memberDailySeconds = new Map<string, Map<string, number>>()
   const memberHourly = new Map<string, number[]>()
   const memberTotals = new Map<string, number>()
 
@@ -133,6 +145,27 @@ export async function GET(request: Request, { params }: { params: Promise<{ team
       durationAdjustment: t.durationAdjustment,
     }
     accumulateSession(teamHourly, memberHourly, memberTotals, sl, dayStart, dayEnd, now)
+
+    // Accumulate per-day totals for multi-day range
+    if (isMultiDay) {
+      for (const ymd of rangeDates) {
+        const dayBounds = localDayBoundsFromYmd(ymd)
+        if (!dayBounds) continue
+        const rep2 =
+          reportedDurationSeconds({ durationSeconds: t.durationSeconds, durationAdjustment: t.durationAdjustment }) ?? 0
+        const endWall = t.stopTime ? new Date(t.stopTime) : now
+        const wallSec = Math.max(0.001, (endWall.getTime() - startTime.getTime()) / 1000)
+        const oStart = Math.max(startTime.getTime(), dayBounds.start.getTime())
+        const oEnd = Math.min(endWall.getTime(), dayBounds.end.getTime())
+        if (oEnd <= oStart) continue
+        const overlapSec = (oEnd - oStart) / 1000
+        const attributed = rep2 * (overlapSec / wallSec)
+        teamDailySeconds.set(ymd, (teamDailySeconds.get(ymd) ?? 0) + attributed)
+        const mds = memberDailySeconds.get(t.userId) ?? new Map<string, number>()
+        mds.set(ymd, (mds.get(ymd) ?? 0) + attributed)
+        memberDailySeconds.set(t.userId, mds)
+      }
+    }
 
     if (memberFocus && t.userId === memberFocus) {
       const rep = reportedDurationSeconds({
@@ -179,6 +212,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ team
     date,
     members: membersOut,
     team_hourly_seconds: roundHourly(teamHourly),
+    team_daily_seconds: isMultiDay
+      ? rangeDates.map((d) => {
+          const entry: Record<string, unknown> = { date: d }
+          for (const uid of memberUserIds) {
+            entry[uid] = Math.round(memberDailySeconds.get(uid)?.get(d) ?? 0)
+          }
+          return entry
+        })
+      : null,
+    daily_member_ids: isMultiDay ? memberUserIds : null,
     sessions: memberFocus ? sessionsPayload : [],
     member_hourly_seconds: memberHourlyOut,
   })

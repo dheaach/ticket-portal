@@ -3,9 +3,9 @@
 import {
   BarChartOutlined,
   CheckSquareOutlined,
+  ClockCircleOutlined,
   DashboardOutlined,
   DeleteOutlined,
-  FolderOutlined,
   InfoCircleOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -24,7 +24,6 @@ import { shouldOpenHrefInNewTab,SpaNavLink } from '@/components/common/SpaNavLin
 import {
   canAccessCustomerTimeReport,
   canAccessMyTeams,
-  canAccessProjects,
   canAccessSettingsHub,
   canAccessTickets,
   isSettingsHrefPathname,
@@ -63,7 +62,7 @@ function selectedKeysForPathname(pathname: string | null, ticketsSearch: string)
   if (pathname === '/reference' || pathname.startsWith('/reference/')) return ['/reference']
   if (pathname === '/projects' || pathname.startsWith('/projects/')) return ['/projects']
   if (isSettingsHrefPathname(pathname)) return ['/settings']
-  const topLevel = ['/dashboard', '/my-company', '/my-teams', '/customer-time-report']
+  const topLevel = ['/dashboard', '/my-company', '/my-teams', '/customer-time-report', '/reports']
   const top = topLevel.find((k) => pathname === k || (k !== '/dashboard' && pathname.startsWith(`${k}/`)))
   if (top) return [top]
   const ticketsDetail = pathname.startsWith('/tickets/')
@@ -170,6 +169,11 @@ export default function AdminSidebar({ user, collapsed, onCollapse }: AdminSideb
                   key: '/customer-time-report',
                   icon: <BarChartOutlined />,
                   label: linkLabel('/customer-time-report', 'C Report'),
+                },
+                {
+                  key: '/reports',
+                  icon: <ClockCircleOutlined />,
+                  label: linkLabel('/reports', 'Time Report'),
                 },
               ]
             : []),

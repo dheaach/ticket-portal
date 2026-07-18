@@ -432,6 +432,17 @@ export default function TabTickets({ companyData, currentUser, viewerRole, baseP
         ),
     },
     {
+      title: 'Priority',
+      key: 'priority',
+      width: 110,
+      render: (_, r) =>
+        r.priority ? (
+          <Tag color={r.priority.color || undefined}>{r.priority.title}</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        ),
+    },
+    {
       title: 'Due date',
       dataIndex: 'due_date',
       key: 'due_date',

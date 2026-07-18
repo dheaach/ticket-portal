@@ -60,6 +60,8 @@ interface CommentWysiwygProps {
   useSemanticHTML?: boolean
   /** Auto-link http(s) URLs on paste and blur (default true). */
   autoLinkify?: boolean
+  /** Focus the editor immediately after it mounts (default false). */
+  autoFocus?: boolean
 }
 
 export default function CommentWysiwyg({
@@ -71,6 +73,7 @@ export default function CommentWysiwyg({
   ticketId,
   useSemanticHTML = false,
   autoLinkify = true,
+  autoFocus = false,
 }: CommentWysiwygProps) {
   const { resolved } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -79,6 +82,8 @@ export default function CommentWysiwyg({
   const quillRef = useRef<{ getEditor: () => QuillEditor } | null>(null)
   const normalizedPlainTextForQuillRef = useRef(false)
   const prevValueForEpochRef = useRef(value)
+  /** True when the latest value change came from typing inside Quill — must NOT trigger a remount (would drop focus). */
+  const changeFromEditorRef = useRef(false)
   const ticketIdRef = useRef(ticketId)
   ticketIdRef.current = ticketId
   const onChangeRef = useRef(onChange)
@@ -153,6 +158,15 @@ export default function CommentWysiwyg({
     })
   }, [])
 
+  useEffect(() => {
+    if (!mounted || !autoFocus) return
+    const t = window.setTimeout(() => {
+      const editor = quillRef.current?.getEditor() as (QuillEditor & { focus?: () => void }) | undefined
+      editor?.focus?.()
+    }, 50)
+    return () => window.clearTimeout(t)
+  }, [mounted, autoFocus])
+
   /** After paste, linkify bare URLs in the editor HTML. */
   useEffect(() => {
     if (!mounted || !autoLinkify) return
@@ -195,11 +209,14 @@ export default function CommentWysiwyg({
     normalizedPlainTextForQuillRef.current = false
   }, [ticketId])
 
-  /** Remount Quill when parent injects HTML into a blank editor (agent reply template, mode switch). */
+  /** Remount Quill when parent injects HTML into a blank editor (agent reply template, mode switch).
+   * Skip when the change originated from typing in the editor itself — remounting would steal focus. */
   useEffect(() => {
     const prev = prevValueForEpochRef.current ?? ''
     prevValueForEpochRef.current = value ?? ''
-    if (!mounted) return
+    const fromEditor = changeFromEditorRef.current
+    changeFromEditorRef.current = false
+    if (!mounted || fromEditor) return
     if (isBlankEditorValue(prev) && !isBlankEditorValue(value ?? '') && /<[a-z][\s\S]*>/i.test(value ?? '')) {
       setQuillEpoch((e) => e + 1)
     }
@@ -276,7 +293,10 @@ export default function CommentWysiwyg({
   const quillProps = {
     theme: 'snow',
     value,
-    onChange: (v: string) => onChange?.(v),
+    onChange: (v: string) => {
+      changeFromEditorRef.current = true
+      onChange?.(v)
+    },
     onBlur: applyAutoLinkify,
     placeholder,
     modules,
