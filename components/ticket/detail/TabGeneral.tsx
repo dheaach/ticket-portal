@@ -528,6 +528,7 @@ export default function TabGeneral({
                               ticketId={ticketData?.id}
                               placeholder="Ticket description..."
                               height="220px"
+                              autoFocus
                             />
                             <Flex gap={8} wrap="wrap">
                               <Button
@@ -873,7 +874,7 @@ export default function TabGeneral({
                 style={{ resize: 'vertical' }}
               />
             </Descriptions.Item>
-            <Descriptions.Item label={useProjectBoardStatus ? 'Status proyek' : 'Status'}>
+            <Descriptions.Item label={useProjectBoardStatus ? 'Project status' : 'Status'}>
               {useProjectBoardStatus ? (
                 <Select
                   value={sidebarDraft.projectStatusId ?? undefined}
@@ -896,7 +897,7 @@ export default function TabGeneral({
                   }))}
                   style={{ width: '100%' }}
                   allowClear
-                  placeholder="Kolom board"
+                  placeholder="Board column"
                 />
               ) : (
                 <Select

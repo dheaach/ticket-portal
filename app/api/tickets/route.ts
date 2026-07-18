@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, ilike, inArray, isNotNull, lte, or, type SQL,sql } from 'drizzle-orm'
+import { and, asc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, type SQL,sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
@@ -40,6 +40,7 @@ import {
 } from '@/lib/ticket-contact-user'
 import { sendNewTicketAgentNotificationEmail } from '@/lib/ticket-notification-emails'
 import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-access'
+import { buildTicketVisibilityAccessSql } from '@/lib/ticket-visibility-server'
 
 const DEFAULT_LIMIT = 50
 /** Max tickets per list request (UI: 50 / 100 / 200). */
@@ -54,10 +55,11 @@ export async function GET(request: Request) {
 
   const userId = authUser.id
   const role = (authUser as { role?: string }).role?.toLowerCase()
+  const isCustomerViewer = role === 'customer'
 
   // Customer: company tickets + personal tickets without company (owner)
   let customerCompanyId: string | null = null
-  if (role === 'customer') {
+  if (isCustomerViewer) {
     customerCompanyId = await getCustomerCompanyId(userId)
   }
 
@@ -103,16 +105,10 @@ export async function GET(request: Request) {
   const ticketTypeFilter = url.searchParams.get('ticket_type')?.trim().toLowerCase()
 
   /**
-   * Visibility access (non-admin agents): private / team / specific_users tickets follow access rules.
-   * Public tickets are always visible. The sidebar no longer filters by `visibility`; `team_ids` still returns
-   * public tickets for that team even when the user is not a team member.
+   * Visibility access (non-admin agents): legacy public/private/specific_users plus
+   * configured levels (team, account_manager, team_leader, admin, project_manager).
    */
-  const visibilityAccess = or(
-    eq(tickets.visibility, 'public'),
-    and(eq(tickets.visibility, 'private'), eq(tickets.createdBy, userId)),
-    sql`(${tickets.visibility} = 'specific_users' AND ${tickets.id} IN (SELECT ticket_id FROM ticket_assignees WHERE user_id = ${userId}))`,
-    sql`(${tickets.visibility} = 'team' AND ${tickets.teamId} IN (SELECT team_id FROM team_members WHERE user_id = ${userId}))`
-  )!
+  const visibilityAccess = await buildTicketVisibilityAccessSql(userId, role as string | undefined)
 
   const isCustomerList = role === 'customer'
   const isAdminList = isAdmin(role as string | undefined)
@@ -127,7 +123,7 @@ export async function GET(request: Request) {
 
   const conditions: SQL[] = []
   if (isCustomerList) {
-    conditions.push(customerTicketsAccessCondition(userId, customerCompanyId))
+    conditions.push(await customerTicketsAccessCondition(userId, customerCompanyId))
   } else if (isAdminList) {
     if (companyIds.length > 0) conditions.push(inArray(tickets.companyId, companyIds))
   } else {
@@ -244,9 +240,29 @@ export async function GET(request: Request) {
             .leftJoin(tags, eq(ticketTags.tagId, tags.id))
             .where(inArray(ticketTags.ticketId, ticketIds)),
           db
-            .select({ ticketId: ticketComments.ticketId, createdAt: ticketComments.createdAt })
+            .select({ ticketId: ticketComments.ticketId, createdAt: ticketComments.receivedAt })
             .from(ticketComments)
-            .where(and(eq(ticketComments.visibility, 'reply'), inArray(ticketComments.ticketId, ticketIds))),
+            .where(
+              and(
+                inArray(ticketComments.ticketId, ticketIds),
+                // Customer: agent/automation replies. Staff: notes or customer replies.
+                isCustomerViewer
+                  ? and(
+                      eq(ticketComments.visibility, 'reply'),
+                      or(
+                        isNull(ticketComments.authorType),
+                        ne(ticketComments.authorType, 'customer')
+                      )
+                    )
+                  : or(
+                      eq(ticketComments.visibility, 'note'),
+                      and(
+                        eq(ticketComments.visibility, 'reply'),
+                        eq(ticketComments.authorType, 'customer')
+                      )
+                    )
+              )
+            ),
           db
             .select({
               ticketId: ticketAttachments.ticketId,
@@ -324,7 +340,8 @@ export async function GET(request: Request) {
   const result = ticketsRows.map((r) => {
     const t = r.ticket
     const cl = checklistByTicket[t.id] || { completed: 0, total: 0, items: [] }
-    const lastReadAt = t.lastReadAt ? new Date(t.lastReadAt).toISOString() : null
+    const audienceLastRead = isCustomerViewer ? t.customerLastReadAt : t.staffLastReadAt
+    const lastReadAt = audienceLastRead ? new Date(audienceLastRead).toISOString() : null
     const latestReplyAt = latestReplies[t.id]
     const hasUnread = !!latestReplyAt && (!lastReadAt || latestReplyAt > lastReadAt)
     const creatorName = r.creator?.fullName || r.creator?.email || 'Unknown'
@@ -356,7 +373,7 @@ export async function GET(request: Request) {
         ? { id: r.company.id, name: r.company.name, color: r.company.color, email: r.company.email }
         : null,
       creator_name: creatorName,
-      by_label: companyName || creatorName,
+      by_label: creatorName || companyName,
       team_name: r.team?.name ?? null,
       tags: tagsByTicket[t.id] || [],
       assignees: assigneesByTicket[t.id] || [],

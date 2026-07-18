@@ -10,6 +10,7 @@ import type { AutomationActions } from '@/lib/automation-actions-types'
 type ActionType =
   | 'team_id'
   | 'priority'
+  | 'status_slug'
   | 'ticket_type'
   | 'tag_ids'
   | 'add_note'
@@ -34,6 +35,7 @@ const TICKET_CLASSIFICATION_OPTIONS = [
 const ACTION_LABELS: Record<ActionType, string> = {
   team_id: 'Assign to Team',
   priority: 'Set Priority (number)',
+  status_slug: 'Set Status',
   ticket_type: 'Set classification (spam / trash)',
   tag_ids: 'Add Tags',
   add_note: 'Add Note',
@@ -63,6 +65,7 @@ export default function ActionBuilder({ value, onChange = () => {} }: ActionBuil
   const ORDERED_ACTION_KEYS: ActionType[] = [
     'team_id',
     'priority',
+    'status_slug',
     'ticket_type',
     'tag_ids',
     'add_note',
@@ -105,6 +108,8 @@ export default function ActionBuilder({ value, onChange = () => {} }: ActionBuil
       ;(next as Record<string, unknown>).add_note = ''
     } else if (type === 'add_checklist_items') {
       ;(next as Record<string, unknown>).add_checklist_items = []
+    } else if (type === 'status_slug') {
+      ;(next as Record<string, unknown>).status_slug = ''
     } else if (type === 'ticket_type') {
       ;(next as Record<string, unknown>).ticket_type = 'support'
     } else if (type === 'priority') {
@@ -129,6 +134,7 @@ export default function ActionBuilder({ value, onChange = () => {} }: ActionBuil
     [
       'team_id',
       'priority',
+      'status_slug',
       'ticket_type',
       'tag_ids',
       'add_note',
@@ -196,6 +202,22 @@ export default function ActionBuilder({ value, onChange = () => {} }: ActionBuil
                       style={{ width: '100%' }}
                       value={(actions as Record<string, unknown>).priority as number | undefined}
                       onChange={(v) => update('priority', v ?? undefined)}
+                    />
+                  </Form.Item>
+                )}
+                {type === 'status_slug' && (
+                  <Form.Item label={ACTION_LABELS.status_slug} style={{ marginBottom: 0 }}>
+                    <Select
+                      showSearch
+                      allowClear
+                      filterOption={(input, option) =>
+                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      placeholder="Select status"
+                      style={{ width: '100%' }}
+                      value={(actions as Record<string, unknown>).status_slug as string | undefined}
+                      onChange={(v) => update('status_slug', v)}
+                      options={lookup.statuses.map((s) => ({ value: s.slug, label: s.title }))}
                     />
                   </Form.Item>
                 )}

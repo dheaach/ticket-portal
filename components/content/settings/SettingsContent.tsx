@@ -6,6 +6,7 @@ import {
   BarChartOutlined,
   BellOutlined,
   CalendarOutlined,
+  EyeOutlined,
   FileTextOutlined,
   GlobalOutlined,
   InfoCircleOutlined,
@@ -41,6 +42,7 @@ import {
   canAccessSlackNotifications,
   canAccessTeams,
   canAccessTicketAttributes,
+  canAccessTicketVisibilitySettings,
   canAccessUsers,
   canManageDashboardAnnouncements,
   canManageGlobalAnnouncement,
@@ -187,7 +189,9 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
           {(canAccessEmailIntegration(role) ||
             canAccessSlackNotifications(role) ||
             canAccessMessageTemplates(role) ||
-            canAccessAutomationRules(role)) && (
+            canAccessAutomationRules(role) ||
+            canAccessRecurringTickets(role) ||
+            canAccessTicketVisibilitySettings(role)) && (
             <Section heading="Automation">
               <Row gutter={[16, 16]}>
                 {canAccessEmailIntegration(role) && (
@@ -240,6 +244,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                     />
                   </Col>
                 )}
+                {/* Ticket Visibility hidden — not exposed in settings UI */}
                 <Col xs={24} sm={12} md={8}>
                   <HubTile
                     title="Feature Access"
@@ -317,7 +322,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
                       title="AI Integration"
-                      description="Provider Codex/OpenAI dan model aktif"
+                      description="Codex/OpenAI provider and active model"
                       href="/settings/ai"
                       icon={<RobotOutlined />}
                     />

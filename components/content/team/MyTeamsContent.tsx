@@ -85,6 +85,8 @@ type ActivityResponse = {
   date: string
   members: MemberRow[]
   team_hourly_seconds: number[]
+  team_daily_seconds: Record<string, unknown>[] | null
+  daily_member_ids: string[] | null
   sessions: SessionRow[]
   member_hourly_seconds: number[] | null
 }
@@ -95,8 +97,8 @@ interface MyTeamsContentProps {
 
 export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const { today, yesterday } = useMemo(() => localTodayYesterday(), [])
-  const [dateYmd, setDateYmd] = useState(() => today)
+  const { today } = useMemo(() => localTodayYesterday(), [])
+  const [dateRange, setDateRange] = useState<[string, string]>(() => [today, today])
 
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [teamsLoading, setTeamsLoading] = useState(true)
@@ -132,21 +134,22 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
     }
   }, [])
 
-  const buildActivityQuery = useCallback((date: string, memberId?: string) => {
-    const bounds = localDayBoundsFromYmd(date)
-    const qs = new URLSearchParams({ date })
-    if (bounds) {
-      qs.set('day_start', bounds.start.toISOString())
-      qs.set('day_end', bounds.end.toISOString())
+  const buildActivityQuery = useCallback((range: [string, string], memberId?: string) => {
+    const startBounds = localDayBoundsFromYmd(range[0])
+    const endBounds = localDayBoundsFromYmd(range[1])
+    const qs = new URLSearchParams({ date: range[0] })
+    if (startBounds && endBounds) {
+      qs.set('day_start', startBounds.start.toISOString())
+      qs.set('day_end', endBounds.end.toISOString())
     }
     if (memberId) qs.set('member_id', memberId)
     return qs
   }, [])
 
-  const loadSummary = useCallback(async (teamId: string, date: string) => {
+  const loadSummary = useCallback(async (teamId: string, range: [string, string]) => {
     setActivityLoading(true)
     try {
-      const qs = buildActivityQuery(date)
+      const qs = buildActivityQuery(range)
       const res = await fetch(`/api/my-teams/${teamId}/activity?${qs}`, { credentials: 'include' })
       const json = (await res.json()) as ActivityResponse
       if (res.ok && json && typeof json === 'object' && Array.isArray(json.members)) {
@@ -161,10 +164,10 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
     }
   }, [buildActivityQuery])
 
-  const loadMemberDetail = useCallback(async (teamId: string, date: string, memberId: string) => {
+  const loadMemberDetail = useCallback(async (teamId: string, range: [string, string], memberId: string) => {
     setDetailLoading(true)
     try {
-      const qs = buildActivityQuery(date, memberId)
+      const qs = buildActivityQuery(range, memberId)
       const res = await fetch(`/api/my-teams/${teamId}/activity?${qs}`, { credentials: 'include' })
       const json = (await res.json()) as ActivityResponse
       if (res.ok && json && typeof json === 'object') {
@@ -184,13 +187,13 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
       setActivity(null)
       return
     }
-    loadSummary(selectedTeamId, dateYmd)
-  }, [selectedTeamId, dateYmd, loadSummary])
+    loadSummary(selectedTeamId, dateRange)
+  }, [selectedTeamId, dateRange, loadSummary])
 
   useEffect(() => {
     if (!drawerOpen || !focusMember || !selectedTeamId) return
-    loadMemberDetail(selectedTeamId, dateYmd, focusMember.user_id)
-  }, [drawerOpen, focusMember, selectedTeamId, dateYmd, loadMemberDetail])
+    loadMemberDetail(selectedTeamId, dateRange, focusMember.user_id)
+  }, [drawerOpen, focusMember, selectedTeamId, dateRange, loadMemberDetail])
 
   const hourlyChartData = useMemo(() => {
     const bins = activity?.team_hourly_seconds ?? []
@@ -325,7 +328,12 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
     [activity]
   )
 
-  const datePickerValue = useMemo(() => dayjs(dateYmd, 'YYYY-MM-DD'), [dateYmd])
+  const dateRangePickerValue = useMemo(
+    (): [Dayjs, Dayjs] => [dayjs(dateRange[0], 'YYYY-MM-DD'), dayjs(dateRange[1], 'YYYY-MM-DD')],
+    [dateRange]
+  )
+
+  const isSingleDay = dateRange[0] === dateRange[1]
 
   const disabledActivityDate = useCallback((current: Dayjs) => {
     if (!current?.isValid()) return true
@@ -348,32 +356,67 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
               My Teams
             </Title>
             <Text type="secondary" style={{ fontSize: 13 }}>
-              Reported work time for teams you belong to. Pick any calendar day in your local time (up to two years
+              Reported work time for teams you belong to. Pick a date range in your local time (up to two years
               back). Click a member to see their tickets and hourly breakdown.
             </Text>
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <Space wrap align="center" size="middle">
-              <Text type="secondary">Day (local)</Text>
-              <DatePicker
-                value={datePickerValue}
-                onChange={(d) => {
-                  if (!d?.isValid()) return
-                  const next = d.format('YYYY-MM-DD')
-                  if (isValidMyTeamsActivityDateYmd(next)) setDateYmd(next)
+              <Text type="secondary">Date range (local)</Text>
+              <DatePicker.RangePicker
+                value={dateRangePickerValue}
+                onChange={(dates) => {
+                  if (!dates?.[0]?.isValid() || !dates?.[1]?.isValid()) return
+                  const from = dates[0].format('YYYY-MM-DD')
+                  const to = dates[1].format('YYYY-MM-DD')
+                  if (isValidMyTeamsActivityDateYmd(from) && isValidMyTeamsActivityDateYmd(to)) {
+                    setDateRange([from, to])
+                  }
                 }}
                 allowClear={false}
                 disabledDate={disabledActivityDate}
                 format="YYYY-MM-DD"
               />
               <Space size={4} wrap>
-                <Button type="link" size="small" style={{ padding: '0 4px' }} onClick={() => setDateYmd(today)}>
+                <Button type="link" size="small" style={{ padding: '0 4px' }} onClick={() => setDateRange([today, today])}>
                   Today
                 </Button>
                 <Text type="secondary">·</Text>
-                <Button type="link" size="small" style={{ padding: '0 4px' }} onClick={() => setDateYmd(yesterday)}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: '0 4px' }}
+                  onClick={() => {
+                    const y = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
+                    setDateRange([y, y])
+                  }}
+                >
                   Yesterday
+                </Button>
+                <Text type="secondary">·</Text>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: '0 4px' }}
+                  onClick={() => {
+                    const from = dayjs().startOf('week').format('YYYY-MM-DD')
+                    setDateRange([from, today])
+                  }}
+                >
+                  This week
+                </Button>
+                <Text type="secondary">·</Text>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: '0 4px' }}
+                  onClick={() => {
+                    const from = dayjs().startOf('month').format('YYYY-MM-DD')
+                    setDateRange([from, today])
+                  }}
+                >
+                  This month
                 </Button>
               </Space>
             </Space>
@@ -434,29 +477,76 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
                         </div>
                       </Card>
 
-                      <Card title="Daily activity" size="small" style={{ marginBottom: 16 }}>
-                        {hourlyChartData.some((d) => d.seconds > 0) ? (
-                          <div style={{ width: '100%', height: 280 }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={hourlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" className="customer-time-report-chart-grid" />
-                                <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={2} />
-                                <YAxis
-                                  tick={{ fontSize: 11 }}
-                                  tickFormatter={(v) => (v >= 3600 ? `${Math.round(v / 3600)}h` : `${Math.round(v / 60)}m`)}
-                                />
-                                <Tooltip
-                                  formatter={(value) => [formatDuration(Number(value ?? 0)), 'Time']}
-                                  labelFormatter={(l) => `Hour ${l}`}
-                                />
-                                <Bar dataKey="seconds" fill="#9155FD" radius={[4, 4, 0, 0]} name="Seconds" />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        ) : (
-                          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No tracked time this day" />
-                        )}
-                      </Card>
+                      {isSingleDay ? (
+                        <Card title="Hourly activity" size="small" style={{ marginBottom: 16 }}>
+                          {hourlyChartData.some((d) => d.seconds > 0) ? (
+                            <div style={{ width: '100%', height: 280 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={hourlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                                  <CartesianGrid strokeDasharray="3 3" className="customer-time-report-chart-grid" />
+                                  <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={2} />
+                                  <YAxis
+                                    tick={{ fontSize: 11 }}
+                                    tickFormatter={(v) => (v >= 3600 ? `${Math.round(v / 3600)}h` : `${Math.round(v / 60)}m`)}
+                                  />
+                                  <Tooltip
+                                    formatter={(value) => [formatDuration(Number(value ?? 0)), 'Time']}
+                                    labelFormatter={(l) => `Hour ${l}`}
+                                  />
+                                  <Bar dataKey="seconds" fill="#9155FD" radius={[4, 4, 0, 0]} name="Seconds" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No tracked time this day" />
+                          )}
+                        </Card>
+                      ) : (
+                        <Card title="Daily activity" size="small" style={{ marginBottom: 16 }}>
+                          {activity?.team_daily_seconds?.some((row) =>
+                            (activity.daily_member_ids ?? []).some((uid) => Number(row[uid] ?? 0) > 0)
+                          ) ? (
+                            <div style={{ width: '100%', height: 280 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={activity.team_daily_seconds}
+                                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" className="customer-time-report-chart-grid" />
+                                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                                  <YAxis
+                                    tick={{ fontSize: 11 }}
+                                    tickFormatter={(v) => (v >= 3600 ? `${Math.round(v / 3600)}h` : `${Math.round(v / 60)}m`)}
+                                  />
+                                  <Tooltip
+                                    wrapperStyle={{ zIndex: 9999 }}
+                                    formatter={(value, name) => {
+                                      const member = activity.members.find((m) => m.user_id === name)
+                                      return [formatDuration(Number(value ?? 0)), member?.user_name ?? name]
+                                    }}
+                                    labelFormatter={(l) => `Date: ${l}`}
+                                  />
+                                  {(activity.daily_member_ids ?? []).map((uid, i) => {
+                                    const COLORS = ['#9155FD','#01C4C4','#FF9800','#4CAF50','#F44336','#2196F3','#E91E63','#FF5722']
+                                    return (
+                                      <Bar
+                                        key={uid}
+                                        dataKey={uid}
+                                        stackId="a"
+                                        fill={COLORS[i % COLORS.length]}
+                                        name={uid}
+                                        radius={i === (activity.daily_member_ids!.length - 1) ? [4, 4, 0, 0] : undefined}
+                                      />
+                                    )
+                                  })}
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No tracked time in this range" />
+                          )}
+                        </Card>
+                      )}
 
                       <Card title="Members" size="small">
                         <Table<MemberRow>
@@ -489,7 +579,7 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
                 <span>
                   {focusMember.user_name}
                   <Text type="secondary" style={{ marginLeft: 8, fontWeight: 400, fontSize: 14 }}>
-                    · {dateYmd} (local)
+                    · {isSingleDay ? dateRange[0] : `${dateRange[0]} → ${dateRange[1]}`} (local)
                   </Text>
                 </span>
               ) : (
@@ -510,7 +600,7 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
               {focusMember ? (
                 <>
                   <div style={{ marginBottom: 12 }}>
-                    <Text type="secondary">Reported time this day</Text>
+                    <Text type="secondary">{isSingleDay ? 'Reported time this day' : 'Reported time (date range)'}</Text>
                     <Title level={4} style={{ margin: '4px 0 0' }}>
                       {formatDuration(
                         detailActivity?.members.find((m) => m.user_id === focusMember.user_id)?.reported_seconds ??
@@ -519,8 +609,8 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
                     </Title>
                   </div>
                   <Divider style={{ margin: '12px 0' }} />
-                  <Title level={5}>Daily activity by hour (local)</Title>
-                  {memberHourlyChartData.some((d) => d.seconds > 0) ? (
+                  {isSingleDay && <Title level={5}>Activity by hour (local)</Title>}
+                  {isSingleDay && memberHourlyChartData.some((d) => d.seconds > 0) ? (
                     <div style={{ width: '100%', height: 240, marginBottom: 20 }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={memberHourlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -538,9 +628,9 @@ export default function MyTeamsContent({ user: currentUser }: MyTeamsContentProp
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                  ) : (
+                  ) : isSingleDay ? (
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No activity" style={{ marginBottom: 16 }} />
-                  )}
+                  ) : null}
                   <Title level={5}>Sessions & tickets</Title>
                   <Table<SessionRow>
                     rowKey="id"

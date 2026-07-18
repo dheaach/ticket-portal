@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useMemo,useState } from 'react'
 
 import AppTable from '@/components/common/AppTable'
+import { tagPreviewFillHex } from '@/components/common/KanbanTagPreview'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
+import { kanbanTagStyle } from '@/lib/kanban-tag-chip-style'
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, { ...options, credentials: 'include' })
@@ -108,28 +110,29 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
   const [modalVisible, setModalVisible] = useState(false)
   const [editingCompany, setEditingCompany] = useState<CompanyRecord | null>(null)
   const [searchText, setSearchText] = useState('')
-  const [filterStatus, setFilterStatus] = useState<boolean | undefined>(undefined)
   const [filterIsCustomer, setFilterIsCustomer] = useState<boolean | undefined>(undefined)
   const [leaderOptions, setLeaderOptions] = useState<LeaderOption[]>([])
   const [teamOptions, setTeamOptions] = useState<TeamOption[]>([])
   const [managerOptions, setManagerOptions] = useState<ManagerOption[]>([])
   const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10 })
 
   const filteredCompanies = useMemo(() => {
-    return companies.filter((c) => {
-      if (searchText.trim()) {
-        const q = searchText.trim().toLowerCase()
-        const matchesSearch =
-          (c.name || '').toLowerCase().includes(q) ||
-          (c.email || '').toLowerCase().includes(q)
-        if (!matchesSearch) return false
-      }
-      if (filterStatus !== undefined && c.is_active !== filterStatus) return false
-      if (filterIsCustomer !== undefined && (c.is_customer ?? false) !== filterIsCustomer) return false
-      return true
-    })
-  }, [companies, searchText, filterStatus, filterIsCustomer])
+    return companies
+      .filter((c) => {
+        if (searchText.trim()) {
+          const q = searchText.trim().toLowerCase()
+          const matchesSearch =
+            (c.name || '').toLowerCase().includes(q) ||
+            (c.email || '').toLowerCase().includes(q)
+          if (!matchesSearch) return false
+        }
+        if (filterIsCustomer !== undefined && (c.is_customer ?? false) !== filterIsCustomer) return false
+        return true
+      })
+      .sort((a, b) => Number(b.is_customer ?? false) - Number(a.is_customer ?? false))
+  }, [companies, searchText, filterIsCustomer])
 
   const fetchCompanies = async () => {
     setLoading(true)
@@ -182,7 +185,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
     setEditingCompany(null)
     form.resetFields()
     form.setFieldsValue({
-      is_active: true,
       color: '#000000',
       email: undefined,
       leader_user_id: undefined,
@@ -199,7 +201,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
     form.setFieldsValue({
       name: record.name,
       email: record.email || '',
-      is_active: record.is_active,
       color: record.color || '#000000',
       leader_user_id: record.created_by || undefined,
       active_team_id: record.active_team_id || undefined,
@@ -223,7 +224,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
   const handleSubmit = async (values: {
     name: string
     email?: string
-    is_active: boolean
     color?: string
     leader_user_id?: string
     active_team_id?: string | null
@@ -237,6 +237,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       active_time: values.active_time ?? 0,
       is_customer: values.is_customer === true,
     }
+    setSaving(true)
     try {
       if (editingCompany) {
         await apiFetch(`/api/companies/${editingCompany.id}`, {
@@ -245,7 +246,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
           body: JSON.stringify({
             name: values.name,
             email: values.email?.trim() || null,
-            is_active: values.is_active,
             color: values.color || '#000000',
             leader_user_id: values.leader_user_id,
             ...staffPayload,
@@ -262,7 +262,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
           body: JSON.stringify({
             name: values.name,
             email: values.email?.trim() || null,
-            is_active: values.is_active,
             color: values.color || '#000000',
             leader_user_id: values.leader_user_id,
             ...staffPayload,
@@ -275,6 +274,8 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       }
     } catch (error: unknown) {
       message.error((error as Error).message || 'Failed to save company')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -285,67 +286,45 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       key: 'name',
       sorter: (a, b) => (a.name || '').localeCompare(b.name || ''),
       sortDirections: ['ascend', 'descend'],
-      render: (name: string) => <strong>{name}</strong>,
-    },
-    {
-      title: 'Email',
-      dataIndex: 'email',
-      key: 'email',
-      sorter: (a, b) => (a.email || '').localeCompare(b.email || ''),
-      sortDirections: ['ascend', 'descend'],
-      render: (email: string) => email ? <a href={`mailto:${email}`}>{email}</a> : '—',
-    },
-    {
-      title: 'Status',
-      dataIndex: 'is_active',
-      key: 'is_active',
-      sorter: (a, b) => (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0),
-      sortDirections: ['ascend', 'descend'],
-      render: (is_active: boolean) => (
-        <Tag color={is_active ? 'green' : 'default'}>
-          {is_active ? 'ACTIVE' : 'INACTIVE'}
-        </Tag>
+      render: (name: string, record: CompanyRecord) => (
+        <Tag style={kanbanTagStyle({ fillHex: tagPreviewFillHex(record.color) })}>{name}</Tag>
       ),
     },
-    // {
-    //   title: 'Is customer',
-    //   dataIndex: 'is_customer',
-    //   key: 'is_customer',
-    //   width: 140,
-    //   align: 'center',
-    //   sorter: (a, b) => Number(a.is_customer ?? false) - Number(b.is_customer ?? false),
-    //   sortDirections: ['ascend', 'descend'],
-    //   render: (is_customer: boolean | undefined) => (
-    //     <Tag color={is_customer ? 'blue' : 'default'}>{is_customer ? 'Yes' : 'No'}</Tag>
-    //   ),
-    // },
     {
-      title: 'Color',
-      dataIndex: 'color',
-      key: 'color',
+      title: 'Is customer',
+      dataIndex: 'is_customer',
+      key: 'is_customer',
       width: 120,
-      render: (color: string) => (
-        <Space>
-          <div
-            style={{
-              width: 24,
-              height: 24,
-              borderRadius: 4,
-              backgroundColor: color || '#000000',
-              border: '1px solid #d9d9d9',
-            }}
-          />
-          <Typography.Text type="secondary">{color || '#000000'}</Typography.Text>
-        </Space>
+      align: 'center',
+      sorter: (a, b) => Number(a.is_customer ?? false) - Number(b.is_customer ?? false),
+      sortDirections: ['ascend', 'descend'],
+      render: (is_customer: boolean | undefined) => (
+        <Tag color={is_customer ? 'blue' : 'default'}>{is_customer ? 'Yes' : 'No'}</Tag>
       ),
     },
     {
-      title: 'Created At',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      sortDirections: ['ascend', 'descend'],
-      render: (date: string) => <DateDisplay date={date} />,
+      title: 'Active Team',
+      key: 'active_team_id',
+      render: (_: unknown, record: CompanyRecord) => {
+        const team = teamOptions.find((t) => t.id === record.active_team_id)
+        return team ? <Tag color="blue">{team.name}</Tag> : '—'
+      },
+    },
+    {
+      title: 'Active Manager',
+      key: 'active_manager_id',
+      render: (_: unknown, record: CompanyRecord) => {
+        const mgr = managerOptions.find((m) => m.id === record.active_manager_id)
+        return mgr ? (mgr.full_name || mgr.email) : '—'
+      },
+    },
+    {
+      title: 'Active Time',
+      key: 'active_time',
+      width: 110,
+      align: 'center',
+      render: (_: unknown, record: CompanyRecord) =>
+        (record.active_time ?? 0) > 0 ? `${record.active_time}H` : '—',
     },
     {
       title: 'Last ticket update',
@@ -374,18 +353,14 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               type="default"
               icon={<EyeOutlined />}
               onClick={() => router.push(`/settings/companies/${record.id}`)}
-            >
-              Details
-            </Button>
+            />
           </Tooltip>
           <Tooltip title="Edit">
             <Button
               type="primary"
               icon={<EditOutlined />}
               onClick={() => handleEdit(record)}
-            >
-              Edit
-            </Button>
+            />
           </Tooltip>
           <Popconfirm
             title="Delete Company"
@@ -395,13 +370,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
             cancelText="No"
           >
             <Tooltip title="Delete">
-              <Button
-                type="primary"
-                danger
-                icon={<DeleteOutlined />}
-              >
-                Delete
-              </Button>
+              <Button type="primary" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
         </Space>
@@ -470,6 +439,9 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               dataSource={filteredCompanies}
               rowKey="id"
               loading={loading}
+              rowClassName={(record: CompanyRecord) =>
+                record.is_customer && !(record.active_time ?? 0) ? 'company-row--no-active-time' : ''
+              }
               pagination={{
                 current: pagination.current,
                 pageSize: pagination.pageSize,
@@ -484,9 +456,12 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
             title={editingCompany ? 'Edit Company' : 'Create Company'}
             open={modalVisible}
             onCancel={() => {
+              if (saving) return
               setModalVisible(false)
               form.resetFields()
             }}
+            maskClosable={!saving}
+            closable={!saving}
             footer={null}
             width={640}
           >
@@ -494,6 +469,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               form={form}
               layout="vertical"
               onFinish={handleSubmit}
+              disabled={saving}
             >
               <Form.Item
                 name="name"
@@ -600,10 +576,10 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
 
               <Form.Item>
                 <Space>
-                  <Button type="primary" htmlType="submit">
+                  <Button type="primary" htmlType="submit" loading={saving}>
                     {editingCompany ? 'Update' : 'Create'}
                   </Button>
-                  <Button onClick={() => {
+                  <Button disabled={saving} onClick={() => {
                     setModalVisible(false)
                     form.resetFields()
                   }}>

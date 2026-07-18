@@ -1,7 +1,8 @@
 'use client'
 
-import { ClockCircleOutlined, DeleteOutlined,EditOutlined, PaperClipOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
-import { Avatar, Button, Col, Descriptions, Empty, Flex, Modal, Popconfirm, Row, Select, Space, Tag, Typography } from 'antd'
+import { ClockCircleOutlined, DeleteOutlined,EditOutlined, PaperClipOutlined, SaveOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
+import { Avatar, Button, Col, Descriptions, Empty, Flex, InputNumber, Modal, Popconfirm, Row, Select, Space, Tag, Typography } from 'antd'
+import { useEffect, useState } from 'react'
 
 import DateDisplay from '@/components/common/DateDisplay'
 import { sanitizeRichHtml } from '@/lib/sanitize-rich-html'
@@ -72,8 +73,8 @@ interface TabGeneralCustomerProps {
   onStatusChange?: (newStatus: string) => void | Promise<void>
   statusChanging?: boolean
   typeOptions: { id: number; title: string; slug: string; color: string }[]
-  onTypeChange?: (typeId: number | null) => void | Promise<void>
-  typeChanging?: boolean
+  onSaveChanges?: (changes: { type_id?: number | null; priority?: number | null }) => Promise<void>
+  savingChanges?: boolean
   comments: Comment[]
   currentUserId: string
   editingComment: string | null
@@ -112,8 +113,8 @@ export default function TabGeneralCustomer({
   onStatusChange,
   statusChanging = false,
   typeOptions,
-  onTypeChange,
-  typeChanging = false,
+  onSaveChanges,
+  savingChanges = false,
   comments,
   currentUserId,
   editingComment,
@@ -139,6 +140,25 @@ export default function TabGeneralCustomer({
   currentTime,
   formatTime,
 }: TabGeneralCustomerProps) {
+  const [typeDraft, setTypeDraft] = useState<number | null>(() => ticketData?.type_id ?? null)
+  const [priorityDraft, setPriorityDraft] = useState<number | null>(() => {
+    const raw = ticketData?.priority
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null
+  })
+
+  useEffect(() => {
+    setTypeDraft(ticketData?.type_id ?? null)
+  }, [ticketData?.type_id])
+
+  useEffect(() => {
+    const raw = ticketData?.priority
+    setPriorityDraft(typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null)
+  }, [ticketData?.priority])
+
+  const isDirty =
+    typeDraft !== (ticketData?.type_id ?? null) ||
+    priorityDraft !== (ticketData?.priority ?? null)
+
   const creatorId = ticketData.creator?.id ?? ticketData.created_by ?? null
   const creatorEmail = ticketData.creator?.email ?? null
   const creatorLabel =
@@ -458,11 +478,11 @@ export default function TabGeneralCustomer({
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Type">
-            {onTypeChange ? (
+            {onSaveChanges ? (
               <Select
-                value={ticketData.type_id ?? undefined}
-                onChange={(v) => onTypeChange(v ?? null)}
-                loading={typeChanging}
+                value={typeDraft ?? undefined}
+                onChange={(v) => setTypeDraft(v ?? null)}
+                disabled={savingChanges}
                 options={typeOptions.map((t) => ({
                   value: t.id,
                   label: <Tag color={t.color} style={{ margin: 0 }}>{t.title}</Tag>,
@@ -480,7 +500,25 @@ export default function TabGeneralCustomer({
             )}
           </Descriptions.Item>
           <Descriptions.Item label="Priority">
-            <Text>{formatTicketNumericPriority(ticketData.priority)}</Text>
+            {onSaveChanges ? (
+              <InputNumber
+                min={1}
+                precision={0}
+                value={priorityDraft ?? undefined}
+                onChange={(v) =>
+                  setPriorityDraft(
+                    v == null || !Number.isFinite(Number(v))
+                      ? null
+                      : Math.max(1, Math.floor(Number(v)))
+                  )
+                }
+                disabled={savingChanges}
+                placeholder="Rank"
+                style={{ width: '100%', minWidth: 120 }}
+              />
+            ) : (
+              <Text>{formatTicketNumericPriority(ticketData.priority)}</Text>
+            )}
           </Descriptions.Item>
           <Descriptions.Item label="Created By">
             <TicketUserMention userId={creatorId} email={creatorEmail}>
@@ -530,6 +568,18 @@ export default function TabGeneralCustomer({
           </Descriptions.Item> */}
         </Descriptions>
         <br />
+        {onSaveChanges && isDirty ? (
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            block
+            loading={savingChanges}
+            onClick={() => void onSaveChanges({ type_id: typeDraft, priority: priorityDraft })}
+            style={{ marginBottom: canCloseTicket ? 8 : 0 }}
+          >
+            Save changes
+          </Button>
+        ) : null}
         {canCloseTicket ? (
           <Button type="primary" danger block loading={statusChanging} onClick={showCloseTicketConfirm}>
             Close this ticket

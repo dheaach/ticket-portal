@@ -1,11 +1,12 @@
 import dayjs, { type Dayjs } from 'dayjs'
 import isoWeek from 'dayjs/plugin/isoWeek'
-import { and, eq, gte, isNotNull, lte, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm'
 
 import {
   companyDailyActiveAssignments,
   customerWeeklyRecapCells,
   db,
+  teamMembers,
   teams,
   tickets,
   ticketTimeTracker,
@@ -68,6 +69,13 @@ export async function materializeCustomerWeeklyRecapForTeam(opts: {
 
   let cellsWritten = 0
 
+  // Fetch team members once for the entire range
+  const memberRows = await db
+    .select({ userId: teamMembers.userId })
+    .from(teamMembers)
+    .where(eq(teamMembers.teamId, teamId))
+  const memberUserIds = memberRows.map((r) => r.userId)
+
   for (const w of weeks) {
     const wsYmd = w.weekStart.format('YYYY-MM-DD')
     const weYmd = w.weekEnd.format('YYYY-MM-DD')
@@ -93,25 +101,29 @@ export async function materializeCustomerWeeklyRecapForTeam(opts: {
 
     const companyUniverse = new Set<string>(clientByCompany.keys())
 
-    const trackerRows = await db
-      .select({
-        companyId: tickets.companyId,
-        durationSeconds: ticketTimeTracker.durationSeconds,
-        durationAdjustment: ticketTimeTracker.durationAdjustment,
-        startTime: ticketTimeTracker.startTime,
-        stopTime: ticketTimeTracker.stopTime,
-      })
-      .from(ticketTimeTracker)
-      .innerJoin(tickets, eq(ticketTimeTracker.ticketId, tickets.id))
-      .where(
-        and(
-          isNotNull(ticketTimeTracker.stopTime),
-          isNotNull(tickets.companyId),
-          eq(tickets.ticketType, 'support'),
-          lte(ticketTimeTracker.startTime, weekEndDt),
-          sql`coalesce(${ticketTimeTracker.stopTime}, now()) >= ${weekStartDt.toISOString()}`
-        )
-      )
+    const trackerRows =
+      memberUserIds.length === 0
+        ? []
+        : await db
+            .select({
+              companyId: tickets.companyId,
+              durationSeconds: ticketTimeTracker.durationSeconds,
+              durationAdjustment: ticketTimeTracker.durationAdjustment,
+              startTime: ticketTimeTracker.startTime,
+              stopTime: ticketTimeTracker.stopTime,
+            })
+            .from(ticketTimeTracker)
+            .innerJoin(tickets, eq(ticketTimeTracker.ticketId, tickets.id))
+            .where(
+              and(
+                isNotNull(ticketTimeTracker.stopTime),
+                isNotNull(tickets.companyId),
+                eq(tickets.ticketType, 'support'),
+                inArray(ticketTimeTracker.userId, memberUserIds),
+                lte(ticketTimeTracker.startTime, weekEndDt),
+                sql`coalesce(${ticketTimeTracker.stopTime}, now()) >= ${weekStartDt.toISOString()}`
+              )
+            )
 
     const trackerByCompany = new Map<string, number>()
     for (const row of trackerRows) {

@@ -46,15 +46,15 @@ export function isValidMyTeamsActivityDateYmd(ymd: string | null | undefined): b
 }
 
 /**
- * Validates `day_start` / `day_end` from the client (ISO instants for one local calendar day).
- * Allows ~18–30h span for DST; blocks future calendar days and very old windows.
- * `day_end` may be local end-of-day (still in the future on "today") — that is allowed.
+ * Validates `day_start` / `day_end` from the client (ISO instants for a local calendar day range).
+ * Allows 1 day up to MY_TEAMS_ACTIVITY_MAX_PAST_DAYS days span; blocks future start and very old windows.
  */
 export function validateMyTeamsActivityDayWindow(dayStart: Date, dayEnd: Date): boolean {
   if (Number.isNaN(dayStart.getTime()) || Number.isNaN(dayEnd.getTime())) return false
   if (dayEnd.getTime() < dayStart.getTime()) return false
-  const span = dayEnd.getTime() - dayStart.getTime()
-  if (span < 18 * 3600 * 1000 || span > 30 * 3600 * 1000) return false
+  const spanMs = dayEnd.getTime() - dayStart.getTime()
+  const maxSpanMs = MY_TEAMS_ACTIVITY_MAX_PAST_DAYS * 24 * 3600 * 1000
+  if (spanMs < 18 * 3600 * 1000 || spanMs > maxSpanMs) return false
 
   const { today } = localTodayYesterday()
   const todayBounds = localDayBoundsFromYmd(today)
