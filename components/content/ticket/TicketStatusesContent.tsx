@@ -66,7 +66,7 @@ function ColorPickerWithInput({
   value?: string
   onChange?: (v: string) => void
 } & React.ComponentProps<typeof Input>) {
-  const hex = value && /^#[0-9A-Fa-f]{6}$/.test(value) ? value : '#64BCE9'
+  const hex = value && /^#[0-9A-Fa-f]{6}$/.test(value) ? value : '#1890ff'
   return (
     <Space align="center" style={{ width: '100%' }}>
       <input
@@ -85,7 +85,7 @@ function ColorPickerWithInput({
       <Input
         value={value || ''}
         onChange={(e) => onChange?.(e.target.value)}
-        placeholder="#64BCE9"
+        placeholder="#1890ff"
         style={{ width: 120 }}
         {...rest}
       />
@@ -245,7 +245,7 @@ export default function TicketStatusesContent({ user: currentUser }: TicketStatu
       key: 'preview',
       width: 200,
       render: (_: string, record: TicketStatusRecord) => (
-        <Tag style={kanbanTagStyle({ fillHex: tagPreviewFillHex(record.color, '#64BCE9') })}>
+        <Tag style={kanbanTagStyle({ fillHex: tagPreviewFillHex(record.color, '#1890ff') })}>
           {record.title}
         </Tag>
       ),
@@ -368,14 +368,14 @@ export default function TicketStatusesContent({ user: currentUser }: TicketStatu
               >
                 <Input placeholder="e.g. in_progress" disabled={!!editingStatus} />
               </Form.Item>
-              <Form.Item name="color" label="Color (hex)" initialValue="#64BCE9">
+              <Form.Item name="color" label="Color (hex)" initialValue="#1890ff">
                 <ColorPickerWithInput />
               </Form.Item>
               <Form.Item label="Tag preview">
                 <KanbanTagPreview
                   colorHex={previewColor}
                   name={previewTitle ?? undefined}
-                  fallbackHex="#64BCE9"
+                  fallbackHex="#1890ff"
                   emptyLabel="Status preview"
                 />
               </Form.Item>
