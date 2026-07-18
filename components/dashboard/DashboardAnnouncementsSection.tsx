@@ -97,7 +97,7 @@ export default function DashboardAnnouncementsSection() {
                     cursor: 'pointer',
                     textAlign: 'left',
                     width: '100%',
-                    color: 'var(--ticket-nav-filter-link, #16324A)',
+                    color: 'var(--ticket-nav-filter-link, #1890ff)',
                     fontWeight: 600,
                     fontSize: 14,
                   }}
