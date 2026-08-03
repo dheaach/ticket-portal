@@ -230,7 +230,7 @@ export default function AdminSidebar({ user, collapsed, onCollapse }: AdminSideb
               />
             ) : (
               <Image
-                src="/deskteam360-logo-white%201.png"
+                src="/efectiveseo-logo.png"
                 alt={appName}
                 height={36}
                 width={1000}
