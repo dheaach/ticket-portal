@@ -70,6 +70,36 @@ const { Title, Text } = Typography
 const { TextArea } = Input
 const { Option } = Select
 
+function TitleDisplay({ id, title }: { id: number; title: string }) {
+    const [expanded, setExpanded] = useState(false)
+    const isLong = title.length > 80
+    return (
+        <span style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <span
+                style={{
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: expanded ? 'unset' : 2,
+                    overflow: 'hidden',
+                    wordBreak: 'break-word',
+                }}
+            >
+                #{id} {title}
+            </span>
+            {isLong && (
+                <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, fontSize: 12, height: 'auto' }}
+                    onClick={() => setExpanded((e) => !e)}
+                >
+                    {expanded ? 'show less' : 'show more'}
+                </Button>
+            )}
+        </span>
+    )
+}
+
 interface Screenshot {
     id: string
     file_name: string
@@ -110,6 +140,7 @@ interface ChecklistItem {
     title: string
     is_completed: boolean
     order_index: number
+    group_name: string | null
     created_at: string
     completed_at: string | null
     completed_by_user_id: string | null
@@ -597,14 +628,14 @@ export default function TicketDetailContent({
     const addChecklistItemByTitle = async (
         title: string,
         orderIndex: number,
-        options?: { silent?: boolean }
+        options?: { silent?: boolean; groupName?: string | null }
     ) => {
         const trimmed = title.trim()
         if (!trimmed) return null
         const data = await apiFetch<any>(`/api/tickets/${displayTicket.id}/checklist`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: trimmed, order_index: orderIndex }),
+            body: JSON.stringify({ title: trimmed, order_index: orderIndex, group_name: options?.groupName ?? null }),
         })
         const row = { ...data, order_index: data.order_index ?? orderIndex }
         setChecklistItems((prev) => [...prev, row])
@@ -612,7 +643,7 @@ export default function TicketDetailContent({
         return row
     }
 
-    const handleAddChecklistItem = async () => {
+    const handleAddChecklistItem = async (groupName?: string | null) => {
         if (!newChecklistTitle.trim()) {
             message.warning('Please enter a checklist item title')
             return
@@ -621,13 +652,26 @@ export default function TicketDetailContent({
         try {
             const maxOrder =
                 checklistItems.length > 0 ? Math.max(...checklistItems.map((item) => item.order_index)) : -1
-            await addChecklistItemByTitle(newChecklistTitle, maxOrder + 1)
+            await addChecklistItemByTitle(newChecklistTitle, maxOrder + 1, { groupName })
             setNewChecklistTitle('')
         } catch (err: any) {
             message.error(err?.message || 'Failed to add checklist item')
         } finally {
             setLoading(false)
         }
+    }
+
+    const loadChecklistItems = async () => {
+        try {
+            const items = await apiFetch<ChecklistItem[]>(`/api/tickets/${displayTicket.id}/checklist`)
+            setChecklistItems(items)
+        } catch {
+            // silent
+        }
+    }
+
+    const handleChecklistTemplateApplied = () => {
+        void loadChecklistItems()
     }
 
     const handleAddChecklistItemsBulk = async (titles: string[]) => {
@@ -651,7 +695,7 @@ export default function TicketDetailContent({
 
     const patchChecklistItem = async (
         itemId: string,
-        body: { is_completed?: boolean; completion_note?: string }
+        body: { is_completed?: boolean; completion_note?: string; group_name?: string | null }
     ) => {
         const updated = await apiFetch<ChecklistItem>(
             `/api/tickets/${displayTicket.id}/checklist/${itemId}`,
@@ -688,6 +732,27 @@ export default function TicketDetailContent({
         } catch (err: any) {
             message.error(err?.message || 'Failed to save note')
         }
+    }
+
+    const handleMoveChecklistItemToGroup = async (itemId: string, groupName: string | null) => {
+        try {
+            await patchChecklistItem(itemId, { group_name: groupName })
+            setChecklistItems((prev) =>
+                prev.map((item) => (item.id === itemId ? { ...item, group_name: groupName } : item))
+            )
+        } catch (err: any) {
+            message.error(err?.message || 'Failed to move item')
+        }
+    }
+
+    const handleDeleteGroup = async (groupName: string) => {
+        const itemsInGroup = checklistItems.filter((i) => i.group_name === groupName)
+        await Promise.all(
+            itemsInGroup.map((i) => patchChecklistItem(i.id, { group_name: null }))
+        )
+        setChecklistItems((prev) =>
+            prev.map((i) => i.group_name === groupName ? { ...i, group_name: null } : i)
+        )
     }
 
     const handleDeleteChecklistItem = async (itemId: string) => {
@@ -1336,9 +1401,13 @@ export default function TicketDetailContent({
                         <Flex gap={16} align="center" wrap="wrap" style={{ marginBottom: 24 }}>
                             <Button
                                 icon={<ArrowLeftOutlined />}
-                                onClick={() => router.push(isCustomer ? '/tickets' : '/tickets')}
+                                onClick={() => {
+                                    if (rowTicketType === 'spam') window.location.href = '/tickets?ticket_type=spam'
+                                    else if (rowTicketType === 'trash') window.location.href = '/tickets?ticket_type=trash'
+                                    else window.location.href = '/tickets'
+                                }}
                             >
-                                Back to {isCustomer ? 'Portal' : 'Tickets'}
+                                Back to {isCustomer ? 'Portal' : rowTicketType === 'spam' ? 'Spam' : rowTicketType === 'trash' ? 'Trash' : 'Tickets'}
                             </Button>
                             <div
                                 style={{
@@ -1362,7 +1431,7 @@ export default function TicketDetailContent({
                                     }}
                                 >
                                     <Title
-                                        level={2}
+                                        level={4}
                                         style={{
                                             margin: 0,
                                             flex: '1 1 160px',
@@ -1372,26 +1441,6 @@ export default function TicketDetailContent({
                                             gap: 10,
                                         }}
                                     >
-                                        {rowTicketType === 'spam' && (
-                                            <Tooltip title="Spam">
-                                                <span style={{ display: 'inline-flex', flexShrink: 0 }}>
-                                                    <WarningTwoTone
-                                                        twoToneColor={['#ff4d4f', '#ffccc7']}
-                                                        style={{ fontSize: 32 }}
-                                                    />
-                                                </span>
-                                            </Tooltip>
-                                        )}
-                                        {rowTicketType === 'trash' && (
-                                            <Tooltip title="Trash">
-                                                <span style={{ display: 'inline-flex', flexShrink: 0 }}>
-                                                    <DeleteTwoTone
-                                                        twoToneColor={['#ff4d4f', '#ffccc7']}
-                                                        style={{ fontSize: 32 }}
-                                                    />
-                                                </span>
-                                            </Tooltip>
-                                        )}
                                         <span style={{ minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
                                             {!isCustomer && titleEditing ? (
                                                 <Flex gap={8} align="center" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
@@ -1429,12 +1478,10 @@ export default function TicketDetailContent({
                                                 </Flex>
                                             ) : (
                                                 <>
-                                                    <span>
-                                                        #{displayTicket.id}{' '}
-                                                        {typeof displayTicket.title === 'string'
-                                                            ? displayTicket.title
-                                                            : ''}
-                                                    </span>
+                                                    <TitleDisplay
+                                                        id={displayTicket.id}
+                                                        title={typeof displayTicket.title === 'string' ? displayTicket.title : ''}
+                                                    />
                                                     {!isCustomer && (
                                                         <Button
                                                             type="primary"
@@ -1492,11 +1539,11 @@ export default function TicketDetailContent({
                                                 gap: 8,
                                             }}
                                         >
-                                            {/* {rowTicketType !== 'support' && (
+                                            {rowTicketType !== 'support' && (
                                                 <Tag color={rowTicketType === 'spam' ? 'red' : 'orange'}>
-                                                    {rowTicketType === 'spam' ? 'Spam' : 'Trash'}
+                                                    {rowTicketType === 'spam' ? 'Spam ticket' : 'Trash ticket'}
                                                 </Tag>
-                                            )} */}
+                                            )}
                                             { rowTicketType !=='spam'&&(
                                                 <Button
                                                 icon={<WarningOutlined />}
@@ -1718,6 +1765,7 @@ export default function TicketDetailContent({
                                             : 'Checklist',
                                     children: (
                                         <TabChecklist
+                                            ticketId={displayTicket.id}
                                             checklistItems={checklistItems}
                                             totalChecklistCount={totalChecklistCount}
                                             completedChecklistCount={completedChecklistCount}
@@ -1728,6 +1776,9 @@ export default function TicketDetailContent({
                                             onUncompleteChecklistItem={handleUncompleteChecklistItem}
                                             onUpdateChecklistNote={handleUpdateChecklistNote}
                                             onDeleteChecklistItem={handleDeleteChecklistItem}
+                                            onMoveToGroup={handleMoveChecklistItemToGroup}
+                                            onDeleteGroup={handleDeleteGroup}
+                                            onTemplateApplied={handleChecklistTemplateApplied}
                                         />
                                     ),
                                 },

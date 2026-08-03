@@ -301,7 +301,7 @@ export default function CommentWysiwyg({
     placeholder,
     modules,
     formats: QUILL_FORMATS,
-    style: { backgroundColor: shellBg, height: height },
+    style: { backgroundColor: shellBg, height: '100%' },
     ref: quillRef,
     tabIndex: 10,
     useSemanticHTML,
@@ -311,10 +311,22 @@ export default function CommentWysiwyg({
     <style>{`
       .comment-wysiwyg-wrapper {
         position: relative;
-        overflow: visible;
+        overflow: hidden;
+      }
+      .comment-wysiwyg-wrapper .quill {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .comment-wysiwyg-wrapper .ql-container {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
       }
       .comment-wysiwyg-wrapper .ql-editor {
         min-height: ${editorMinPx}px;
+        height: 100%;
+        box-sizing: border-box;
       }
       /* Toolbar: size / color pickers need room; dropdowns above sibling controls */
       .comment-wysiwyg-wrapper .ql-toolbar.ql-snow {
@@ -353,7 +365,7 @@ export default function CommentWysiwyg({
       }
     `}</style>
 
-    <div className="comment-wysiwyg-wrapper" style={{ marginBottom: 20, height: height, }}>
+    <div className="comment-wysiwyg-wrapper" style={{ marginBottom: 20, height: height, display: 'flex', flexDirection: 'column' }}>
       {/* key remounts Quill when HTML is injected into a blank editor; react-quill-new types omit ref */}
       <ReactQuill key={quillEpoch} {...(quillProps as React.ComponentProps<typeof ReactQuill>)} />
     </div>

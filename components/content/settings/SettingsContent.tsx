@@ -6,7 +6,8 @@ import {
   BarChartOutlined,
   BellOutlined,
   CalendarOutlined,
-  EyeOutlined,
+  CheckSquareOutlined,
+  ClockCircleOutlined,
   FileTextOutlined,
   GlobalOutlined,
   InfoCircleOutlined,
@@ -33,16 +34,17 @@ import {
   canAccessAutomationRules,
   canAccessCompanies,
   canAccessCompanyLog,
+  canAccessCustomerTimeReport,
   canAccessCustomerWeeklyRecap,
   canAccessEmailIntegration,
   canAccessKnowledgeBase,
   canAccessMessageTemplates,
+  canAccessMyTeams,
   canAccessRecapSnapshots,
   canAccessRecurringTickets,
   canAccessSlackNotifications,
   canAccessTeams,
   canAccessTicketAttributes,
-  canAccessTicketVisibilitySettings,
   canAccessUsers,
   canManageDashboardAnnouncements,
   canManageGlobalAnnouncement,
@@ -145,6 +147,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
             </Text>
           </div>
 
+          {/* ── Ticket Attributes ─────────────────────────────────── */}
           {canAccessTicketAttributes(role) && (
             <Section heading="Ticket Attributes">
               <Row gutter={[16, 16]}>
@@ -172,27 +175,37 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                     icon={<TagOutlined />}
                   />
                 </Col>
-                {isAdmin(role) ? (
+                {isAdmin(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="Job types"
+                      title="Job Types"
                       description="Work categories for the time tracker"
                       href="/settings/job-types-catalog"
                       icon={<ToolOutlined />}
                     />
                   </Col>
-                ) : null}
+                )}
+                {isAdmin(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Checklist Templates"
+                      description="Reusable checklist templates with groups, applied to tickets"
+                      href="/settings/checklist-templates"
+                      icon={<CheckSquareOutlined />}
+                    />
+                  </Col>
+                )}
               </Row>
             </Section>
           )}
 
+          {/* ── Automation & Notifications ────────────────────────── */}
           {(canAccessEmailIntegration(role) ||
             canAccessSlackNotifications(role) ||
             canAccessMessageTemplates(role) ||
             canAccessAutomationRules(role) ||
-            canAccessRecurringTickets(role) ||
-            canAccessTicketVisibilitySettings(role)) && (
-            <Section heading="Automation">
+            canAccessRecurringTickets(role)) && (
+            <Section heading="Automation & Notifications">
               <Row gutter={[16, 16]}>
                 {canAccessEmailIntegration(role) && (
                   <Col xs={24} sm={12} md={8}>
@@ -207,7 +220,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                 {canAccessSlackNotifications(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="Slack notifications"
+                      title="Slack Notifications"
                       description="Ticket alerts to a Slack channel"
                       href="/settings/slack-notifications"
                       icon={<BellOutlined />}
@@ -244,21 +257,13 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                     />
                   </Col>
                 )}
-                {/* Ticket Visibility hidden — not exposed in settings UI */}
-                <Col xs={24} sm={12} md={8}>
-                  <HubTile
-                    title="Feature Access"
-                    description="Role-based access overview for all features"
-                    href="/settings/feature-access"
-                    icon={<UnorderedListOutlined />}
-                  />
-                </Col>
               </Row>
             </Section>
           )}
 
+          {/* ── People & Access ───────────────────────────────────── */}
           {(canAccessUsers(role) || canAccessCompanies(role) || canAccessTeams(role)) && (
-            <Section heading="People & access">
+            <Section heading="People & Access">
               <Row gutter={[16, 16]}>
                 {canAccessUsers(role) && (
                   <Col xs={24} sm={12} md={8}>
@@ -290,44 +295,96 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                     />
                   </Col>
                 )}
-              </Row>
-            </Section>
-          )}
-
-          {isAdmin(role) && (
-            <Section heading="App">
-              <Row gutter={[16, 16]}>
                 <Col xs={24} sm={12} md={8}>
                   <HubTile
-                    title="App Branding"
-                    description="App name, logo, and favicon"
-                    href="/settings/app-branding"
-                    icon={<GlobalOutlined />}
+                    title="Feature Access"
+                    description="Role-based access overview for all features"
+                    href="/settings/feature-access"
+                    icon={<UnorderedListOutlined />}
                   />
                 </Col>
               </Row>
             </Section>
           )}
 
-          {(canAccessKnowledgeBase(role) ||
-            canManageGlobalAnnouncement(role) ||
-            canManageDashboardAnnouncements(role) ||
-            canAccessCompanyLog(role) ||
+          {/* ── Reports ───────────────────────────────────────────── */}
+          {(canAccessMyTeams(role) ||
+            canAccessCustomerTimeReport(role) ||
             canAccessRecapSnapshots(role) ||
             canAccessCustomerWeeklyRecap(role) ||
-            canAccessAiSettings(role)) && (
-            <Section heading="General">
+            canAccessCompanyLog(role)) && (
+            <Section heading="Reports">
               <Row gutter={[16, 16]}>
-                {canAccessAiSettings(role) && (
+                {canAccessMyTeams(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="AI Integration"
-                      description="Codex/OpenAI provider and active model"
-                      href="/settings/ai"
-                      icon={<RobotOutlined />}
+                      title="E Report"
+                      description="Employee work time and hourly activity per team"
+                      href="/my-teams"
+                      icon={<TeamOutlined />}
                     />
                   </Col>
                 )}
+                {canAccessCustomerTimeReport(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="C Report"
+                      description="Customer-facing time summary per company"
+                      href="/customer-time-report"
+                      icon={<BarChartOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessCustomerTimeReport(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Time Report"
+                      description="Detailed tracked time log across all tickets"
+                      href="/reports"
+                      icon={<ClockCircleOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessRecapSnapshots(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Recap Snapshots"
+                      description="Saved customer time report recaps (month or week)"
+                      href="/settings/recap-snapshots"
+                      icon={<BarChartOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessCustomerWeeklyRecap(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Customer Weekly Recap"
+                      description="Utilization and client time per customer per week"
+                      href="/settings/customer-weekly-recap"
+                      icon={<CalendarOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessCompanyLog(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Company Log"
+                      description="Daily snapshots of active team, manager, and time per company"
+                      href="/settings/company-log"
+                      icon={<FileTextOutlined />}
+                    />
+                  </Col>
+                )}
+              </Row>
+            </Section>
+          )}
+
+          {/* ── Content ───────────────────────────────────────────── */}
+          {(canAccessKnowledgeBase(role) ||
+            canManageGlobalAnnouncement(role) ||
+            canManageDashboardAnnouncements(role)) && (
+            <Section heading="Content">
+              <Row gutter={[16, 16]}>
                 {canAccessKnowledgeBase(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
@@ -341,7 +398,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                 {canManageGlobalAnnouncement(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="Global announcement"
+                      title="Global Announcement"
                       description="Running banner with start and end schedule"
                       href="/settings/global-announcement"
                       icon={<NotificationOutlined />}
@@ -351,40 +408,36 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                 {canManageDashboardAnnouncements(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="Dashboard announcements"
+                      title="Dashboard Announcements"
                       description="Title on dashboard, full text in a modal; by role"
                       href="/settings/dashboard-announcements"
                       icon={<BellOutlined />}
                     />
                   </Col>
                 )}
-                {canAccessCompanyLog(role) && (
+              </Row>
+            </Section>
+          )}
+
+          {/* ── App ───────────────────────────────────────────────── */}
+          {isAdmin(role) && (
+            <Section heading="App">
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12} md={8}>
+                  <HubTile
+                    title="App Branding"
+                    description="App name, logo, and favicon"
+                    href="/settings/app-branding"
+                    icon={<GlobalOutlined />}
+                  />
+                </Col>
+                {canAccessAiSettings(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
-                      title="Company Log"
-                      description="Raw daily snapshots (active team, manager, time) per company"
-                      href="/settings/company-log"
-                      icon={<FileTextOutlined />}
-                    />
-                  </Col>
-                )}
-                {canAccessRecapSnapshots(role) && (
-                  <Col xs={24} sm={12} md={8}>
-                    <HubTile
-                      title="Recap snapshots"
-                      description="Saved Customer time report recaps (month or week)"
-                      href="/settings/recap-snapshots"
-                      icon={<BarChartOutlined />}
-                    />
-                  </Col>
-                )}
-                {canAccessCustomerWeeklyRecap(role) && (
-                  <Col xs={24} sm={12} md={8}>
-                    <HubTile
-                      title="Recap Customer Weekly"
-                      description="Per-customer ISO weeks vs team (materialized grid)"
-                      href="/settings/customer-weekly-recap"
-                      icon={<CalendarOutlined />}
+                      title="AI Integration"
+                      description="Codex/OpenAI provider and active model"
+                      href="/settings/ai"
+                      icon={<RobotOutlined />}
                     />
                   </Col>
                 )}
