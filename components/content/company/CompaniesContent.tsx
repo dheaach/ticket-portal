@@ -400,19 +400,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                   }}
                   style={{ width: 260 }}
                 />
-                <Select
-                  placeholder="Filter by Status"
-                  allowClear
-                  value={filterStatus}
-                  onChange={(v) => {
-                    setFilterStatus(v)
-                    setPagination((p) => ({ ...p, current: 1 }))
-                  }}
-                  style={{ width: 150 }}
-                >
-                  <Option value={true}>Active</Option>
-                  <Option value={false}>Inactive</Option>
-                </Select>
                 {/* <Select
                   placeholder="Filter Is Customer"
                   allowClear
@@ -550,7 +537,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                     <InputNumber min={0} precision={0} addonAfter="H" style={{ width: '100%' }} />
                   </Form.Item>
                 </Col>
-                {/* <Col xs={24} sm={5}>
+                <Col xs={24} sm={5}>
                   <Form.Item
                     name="is_customer"
                     label="Is customer"
@@ -559,17 +546,8 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                   >
                     <Switch checkedChildren="Yes" unCheckedChildren="No" />
                   </Form.Item>
-                </Col> */}
-                <Col xs={24} sm={8}>
-                  <Form.Item
-                    name="is_active"
-                    label="Status"
-                    valuePropName="checked"
-                  >
-                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
-                  </Form.Item>
                 </Col>
-                <Col xs={24} sm={8}>
+<Col xs={24} sm={8}>
                   <Form.Item name="color" label="Color (hex)" initialValue="#000000">
                     <ColorPickerWithInput />
                   </Form.Item>
