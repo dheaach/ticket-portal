@@ -123,7 +123,6 @@ export async function getCompanyDetail(id: string) {
     active_manager_display,
     active_time: company.activeTime ?? 0,
     is_customer: company.isCustomer ?? false,
-    freshdesk_id: company.freshdeskId ?? null,
     created_at: company.createdAt ? new Date(company.createdAt).toISOString() : '',
     updated_at: company.updatedAt ? new Date(company.updatedAt).toISOString() : '',
     company_users: companyUsersList,
