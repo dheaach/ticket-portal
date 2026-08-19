@@ -694,6 +694,14 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      // Skip emails sent FROM the support Gmail itself (e.g. "Ticket Received" notifications
+      // that land back in the inbox when the customer email equals the integration email).
+      if (integration.emailAddress && senderEmail === integration.emailAddress.toLowerCase().trim()) {
+        alreadyProcessed.add(gmailMessageId)
+        if (isDebug) debugLog.push({ email: senderEmail, subject: subject || '', reason: 'SKIP: sent from own support email (self-loop)' })
+        continue
+      }
+
       const textBodies = extractEmailTextBodies(msg.payload || {})
       const body = (textBodies.html || textBodies.plain || '').trim()
       const rfcMessageId = getHeader('Message-ID')?.trim() || null
@@ -811,7 +819,29 @@ export async function POST(request: NextRequest) {
           isFromCc = allCc.some((e) => e?.trim() && normalizeForMatch(e.trim()) === senderNorm)
         }
 
-        if (!senderMatchesCompany && !isFromCc) {
+        // Also allow reply if sender is a registered user belonging to the ticket's company
+        let isCompanyMember = false
+        if (!senderMatchesCompany && !isFromCc && ticketRow.companyId) {
+          const [memberRow] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(and(ilike(users.email, escapeIlike(senderEmail)), eq(users.companyId, ticketRow.companyId)))
+            .limit(1)
+          if (memberRow) isCompanyMember = true
+        }
+        // Also allow if sender is the contact user on the ticket
+        let isTicketContact = false
+        if (!senderMatchesCompany && !isFromCc && !isCompanyMember) {
+          const [contactRow] = await db
+            .select({ id: tickets.id })
+            .from(tickets)
+            .innerJoin(users, eq(tickets.contactUserId, users.id))
+            .where(and(eq(tickets.id, ticketId), ilike(users.email, escapeIlike(senderEmail))))
+            .limit(1)
+          if (contactRow) isTicketContact = true
+        }
+
+        if (!senderMatchesCompany && !isFromCc && !isCompanyMember && !isTicketContact) {
           skippedCompanyMismatch++
           if (isDebug) {
             debugLog.push({ email: senderEmail, subject: subject || '', reason: `SKIP: company_mismatch (ticket company email: ${companyEmail || 'null'})` })
@@ -821,7 +851,7 @@ export async function POST(request: NextRequest) {
         }
 
         let commentUserId = userId
-        if (senderMatchesCompany) {
+        if (senderMatchesCompany || isCompanyMember || isTicketContact) {
           const [companyUser] = await db
             .select({ id: users.id })
             .from(users)
@@ -1506,20 +1536,42 @@ export async function POST(request: NextRequest) {
 
           if (creatorUserId) {
             try {
-              const sent = await sendRequesterTicketCreatedEmail({
+              const notifResult = await sendRequesterTicketCreatedEmail({
                 creatorUserId,
                 creatorRole: 'customer',
                 companyId: ticketCompanyId,
                 ticketId: newTicket.id,
                 ticketTitle: title,
                 requesterEmailOverride: senderEmail,
+                inReplyToMessageId: rfcMessageId,
+                gmailThreadId: msgThreadId ?? null,
+                originalEmailBody: body || null,
               })
-              if (!sent && isDebug) {
+              if (!notifResult.sent && isDebug) {
                 debugLog.push({
                   email: senderEmail,
                   subject: title,
                   reason: 'WARN: requester_notification_new_ticket_created not sent (see server log)',
                 })
+              }
+              // Save the sent notification to email_messages so send-reply can use its
+              // RFC Message-ID as In-Reply-To (threading all agent replies to this notification).
+              if (notifResult.sent && notifResult.sentGmailMessageId) {
+                try {
+                  await db.insert(emailMessages).values({
+                    gmailMessageId: notifResult.sentGmailMessageId,
+                    threadId: notifResult.sentThreadId ?? null,
+                    fromEmail: senderEmail,
+                    toEmail: senderEmail,
+                    subject: notifResult.sentSubject ?? title,
+                    snippet: null,
+                    ticketId: newTicket.id,
+                    direction: 'outgoing',
+                    ...(notifResult.sentRfcMessageId && { rfcMessageId: notifResult.sentRfcMessageId }),
+                  })
+                } catch {
+                  // Non-fatal — email was sent, only record-keeping failed
+                }
               }
             } catch (mailErr) {
               console.error(

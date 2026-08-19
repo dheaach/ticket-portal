@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, type SQL,sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, type SQL,sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
@@ -43,8 +43,8 @@ import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-acces
 import { buildTicketVisibilityAccessSql } from '@/lib/ticket-visibility-server'
 
 const DEFAULT_LIMIT = 50
-/** Max tickets per list request (UI: 50 / 100 / 200). */
-const MAX_LIMIT = 200
+/** Max tickets per list request (UI: 50 / 100 / 200 / 500). */
+const MAX_LIMIT = 500
 /** GET /api/tickets - List tickets with related data (server-side filtering). Customer: only tickets of their company */
 export async function GET(request: Request) {
   const session = await auth()
@@ -84,6 +84,9 @@ export async function GET(request: Request) {
   const dueDateTo = url.searchParams.get('due_date_to')
   const search = url.searchParams.get('search')?.trim()
   const searchBy = url.searchParams.get('search_by')?.trim() || 'all' // 'all' | 'title' | 'id'
+  const paginated = url.searchParams.get('paginated') === '1'
+  const sortOrder = url.searchParams.get('sort_order') === 'asc' ? 'asc' : 'desc'
+  const sortById = url.searchParams.get('sort_by') === 'id'
   const limit = Math.min(
     Math.max(1, parseInt(url.searchParams.get('limit') || String(DEFAULT_LIMIT), 10)),
     MAX_LIMIT
@@ -217,11 +220,15 @@ export async function GET(request: Request) {
   const ticketsRows = whereClause
     ? await baseQuery
         .where(whereClause)
-        .orderBy(asc(tickets.companyId), asc(tickets.priority), asc(tickets.id))
+        .orderBy(...(sortById
+          ? [sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]
+          : [asc(tickets.companyId), asc(tickets.priority), sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]))
         .limit(limit)
         .offset(offset)
     : await baseQuery
-        .orderBy(asc(tickets.companyId), asc(tickets.priority), asc(tickets.id))
+        .orderBy(...(sortById
+          ? [sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]
+          : [asc(tickets.companyId), asc(tickets.priority), sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]))
         .limit(limit)
         .offset(offset)
 
@@ -357,7 +364,12 @@ export async function GET(request: Request) {
     const audienceLastRead = isCustomerViewer ? t.customerLastReadAt : t.staffLastReadAt
     const lastReadAt = audienceLastRead ? new Date(audienceLastRead).toISOString() : null
     const latestReplyAt = latestReplies[t.id]
-    const hasUnread = !!latestReplyAt && (!lastReadAt || latestReplyAt > lastReadAt)
+    // For agents: a ticket created by a customer counts as unread until first opened.
+    // Use dbInsertedAt as fallback when there are no comments yet.
+    const creatorIsCustomer = !isCustomerViewer && r.creator?.role?.toLowerCase() === 'customer'
+    const ticketInsertedAt = t.dbInsertedAt ? new Date(t.dbInsertedAt).toISOString() : null
+    const latestActivityAt = latestReplyAt ?? (creatorIsCustomer ? ticketInsertedAt : null)
+    const hasUnread = !!latestActivityAt && (!lastReadAt || latestActivityAt > lastReadAt)
     const creatorName = r.creator?.fullName || r.creator?.email || 'Unknown'
     const companyName = r.company?.name
 
@@ -399,6 +411,15 @@ export async function GET(request: Request) {
       attachments: attachmentsByTicket[t.id] || [],
     }
   })
+
+  if (paginated) {
+    const countResult = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(tickets)
+      .where(whereClause)
+    const total = countResult[0]?.count ?? 0
+    return NextResponse.json({ data: result, total })
+  }
 
   return NextResponse.json(result)
 }
@@ -712,6 +733,7 @@ export async function POST(request: Request) {
     }
   }
 
+
   if (insertTicketType !== 'project') {
     void notifySlackTicketEvent('ticket_created', {
       id: ticket.id,
@@ -724,13 +746,20 @@ export async function POST(request: Request) {
     })
 
     try {
-      await sendRequesterTicketCreatedEmail({
+      const notifResult = await sendRequesterTicketCreatedEmail({
         creatorUserId: userId,
         creatorRole: role,
         companyId: resolvedCompanyId,
         ticketId: ticket.id,
         ticketTitle: ticket.title || 'Untitled',
       })
+      // Persist the Gmail thread ID so customer email replies can be matched to this ticket.
+      if (notifResult.sent && notifResult.sentThreadId && !ticket.gmailThreadId) {
+        await db
+          .update(tickets)
+          .set({ gmailThreadId: notifResult.sentThreadId, updatedAt: new Date() })
+          .where(eq(tickets.id, ticket.id))
+      }
     } catch (mailErr) {
       console.error('[POST ticket] requester notification email failed:', mailErr)
     }

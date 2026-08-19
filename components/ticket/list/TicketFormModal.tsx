@@ -121,7 +121,7 @@ export default function TicketFormModal({
       open={open}
       onCancel={onCancel}
       footer={null}
-      width={showSimplifiedForm ? 720 : 1200}
+      width={showSimplifiedForm ? 800 : 1200}
       centered
     >
       <Form form={form} layout="vertical" onFinish={onSubmit}>
@@ -138,17 +138,16 @@ export default function TicketFormModal({
             <CommentWysiwyg
               ticketId={editingTicket?.id}
               placeholder="Ticket Description"
-              height="150px"
+              height="250px"
             />
           </Form.Item>
         )}
 
         {editingTicket && !showSimplifiedForm && (
-          <Form.Item name="short_note" label="Short Note" style={{ marginTop: 50 }}>
+          <Form.Item name="short_note" label="Short Note">
             <Input.TextArea placeholder="Short note (optional)" rows={2} allowClear />
           </Form.Item>
         )}
-        <br />
         {showAttachmentSection && (
           <Form.Item label="Attachments">
             <Flex vertical style={{ width: '100%' }}>
@@ -307,7 +306,7 @@ export default function TicketFormModal({
               showSearch
               optionFilterProp="label"
               options={users
-                .filter((u) => String(u.email || '').trim())
+                .filter((u) => String(u.email || '').trim() && (!watchedCompanyId || u.company_id === watchedCompanyId))
                 .map((u) => ({
                   value: u.id,
                   label: u.full_name ? `${u.full_name} (${u.email})` : u.email,

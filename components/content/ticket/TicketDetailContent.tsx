@@ -9,6 +9,7 @@ import {
     EditOutlined,
     FolderOutlined,
     LeftOutlined,
+    ReloadOutlined,
     RightOutlined,
     WarningOutlined,
     WarningTwoTone,
@@ -231,6 +232,7 @@ export default function TicketDetailContent({
 
     const [loading, setLoading] = useState(false)
     const [classifyLoading, setClassifyLoading] = useState<'support' | 'spam' | 'trash' | null>(null)
+    const [resyncLoading, setResyncLoading] = useState(false)
     const [nextTicketNavLoading, setNextTicketNavLoading] = useState(false)
     const [newChecklistTitle, setNewChecklistTitle] = useState('')
     const [commentVisibility, setCommentVisibility] = useState<'note' | 'reply' | null>(null)
@@ -1037,7 +1039,6 @@ export default function TicketDetailContent({
             message.success('Status updated')
             setDisplayTicket((prev: any) => ({ ...prev, status: newStatus }))
             bumpActivityRefresh()
-            router.refresh()
         } catch (err: unknown) {
             message.error(err instanceof Error ? err.message : 'Failed to update status')
         } finally {
@@ -1299,6 +1300,24 @@ export default function TicketDetailContent({
         },
         [displayTicket?.id, router],
     )
+
+    const resyncFromFreshdesk = useCallback(async () => {
+        const tid = displayTicket?.id
+        if (tid == null) return
+        setResyncLoading(true)
+        try {
+            const res = await apiFetch<{ ok: boolean; comments: { imported: number; skipped: number } }>(
+                '/api/freshdesk/resync-ticket',
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket_id: tid }) },
+            )
+            message.success(`Resync done — ${res.comments.imported} new comment(s)`)
+            router.refresh()
+        } catch (e: unknown) {
+            message.error(e instanceof Error ? e.message : 'Resync failed')
+        } finally {
+            setResyncLoading(false)
+        }
+    }, [displayTicket?.id, router])
 
     type MyOpenTicketNavDirection = 'next' | 'prev'
 
@@ -1581,6 +1600,15 @@ export default function TicketDetailContent({
                                                     onClick={() => void patchTicketClassification('support')}
                                                 >
                                                     Mark as support
+                                                </Button>
+                                            )}
+                                            {displayTicket?.source === 'freshdesk' && (
+                                                <Button
+                                                    icon={<ReloadOutlined />}
+                                                    loading={resyncLoading}
+                                                    onClick={() => void resyncFromFreshdesk()}
+                                                >
+                                                    Resync FD
                                                 </Button>
                                             )}
                                         </div>

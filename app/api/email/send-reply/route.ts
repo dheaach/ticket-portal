@@ -1,8 +1,9 @@
-import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, isNotNull, isNull } from 'drizzle-orm'
 import { google } from 'googleapis'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
+import { formatFromHeader, getAppSettings } from '@/lib/app-settings'
 import { db } from '@/lib/db'
 import { emailIntegrations, emailMessages, tickets } from '@/lib/db/schema'
 import { getObjectBuffer } from '@/lib/storage-idrive'
@@ -210,7 +211,11 @@ export async function POST(request: NextRequest) {
     }
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
-    const fromEmail = integration.emailAddress || 'noreply@example.com'
+    const fromEmailAddress = integration.emailAddress || 'noreply@example.com'
+
+    const appSettings = await getAppSettings()
+    const displayName = appSettings.email_sender_name?.trim() || null
+    const fromEmail = formatFromHeader(displayName, fromEmailAddress)
 
     const [ticketRow] = await db
       .select({ gmailThreadId: tickets.gmailThreadId, title: tickets.title })
@@ -218,24 +223,52 @@ export async function POST(request: NextRequest) {
       .where(eq(tickets.id, ticketIdNum))
       .limit(1)
 
-    const subjectPlain = buildReplySubject(ticketIdNum, ticketTitle, ticketRow?.title)
-    const subjectMime = encodeSubjectHeader(subjectPlain)
+    // Subject is resolved after firstIncoming is fetched below — placeholder here.
+    let subjectPlain = ''
+    let subjectMime = ''
 
-    const [lastIncoming] = await db
-      .select({ rfcMessageId: emailMessages.rfcMessageId, threadId: emailMessages.threadId })
+    // Agent replies thread to the notification email we sent when the ticket was created.
+    // This keeps all replies in the same thread as the customer's original email (the notification
+    // was sent as a reply to the customer's email, so they share a threadId).
+    const [notificationEmail] = await db
+      .select({ rfcMessageId: emailMessages.rfcMessageId, threadId: emailMessages.threadId, subject: emailMessages.subject })
       .from(emailMessages)
       .where(
         and(
           eq(emailMessages.ticketId, ticketIdNum),
-          eq(emailMessages.direction, 'incoming'),
+          eq(emailMessages.direction, 'outgoing'),
           isNotNull(emailMessages.rfcMessageId)
         )
       )
-      .orderBy(desc(emailMessages.syncedAt))
+      .orderBy(asc(emailMessages.syncedAt))
       .limit(1)
 
-    const threadId = ticketRow?.gmailThreadId || lastIncoming?.threadId || null
-    let inReplyTo = lastIncoming?.rfcMessageId || null
+    // Fallback: if no outgoing notification exists (e.g. ticket created via portal),
+    // use the first incoming email from the customer.
+    const [firstIncoming] = notificationEmail
+      ? [undefined]
+      : await db
+          .select({ rfcMessageId: emailMessages.rfcMessageId, threadId: emailMessages.threadId })
+          .from(emailMessages)
+          .where(
+            and(
+              eq(emailMessages.ticketId, ticketIdNum),
+              eq(emailMessages.direction, 'incoming'),
+              isNotNull(emailMessages.rfcMessageId),
+              ilike(emailMessages.fromEmail, `%${recipientEmail}%`)
+            )
+          )
+          .orderBy(asc(emailMessages.syncedAt))
+          .limit(1)
+
+    const threadId = ticketRow?.gmailThreadId || notificationEmail?.threadId || firstIncoming?.threadId || null
+    let inReplyTo = notificationEmail?.rfcMessageId || firstIncoming?.rfcMessageId || null
+
+    // Use the notification email's subject so Gmail groups the reply in the same conversation.
+    // Fall back to raw ticket title if no notification subject is stored.
+    const rawTitle = (ticketRow?.title || ticketTitle || '').trim()
+    subjectPlain = notificationEmail?.subject?.trim() || rawTitle || `Ticket #${ticketIdNum}`
+    subjectMime = encodeSubjectHeader(subjectPlain)
 
     if (threadId && !inReplyTo) {
       try {
@@ -317,13 +350,9 @@ export async function POST(request: NextRequest) {
       .replace(/=+$/, '')
 
     const requestBody: { raw: string; threadId?: string } = { raw }
-    /**
-     * If both threadId and In-Reply-To are sent, Gmail often keeps the *conversation* subject from
-     * the first message in the thread, so "Re: Ticket #n …" never appears in the inbox UI.
-     * Prefer threading via In-Reply-To / References only when we have a Message-ID to reply to.
-     * When there is no In-Reply-To, pass threadId so follow-ups stay in the same Gmail thread.
-     */
-    if (threadId && !inReplyTo) {
+    // threadId is required by the Gmail API to place the sent message into the correct thread.
+    // In-Reply-To/References headers handle threading in the recipient's email client.
+    if (threadId) {
       requestBody.threadId = threadId
     }
 

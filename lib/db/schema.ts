@@ -62,6 +62,7 @@ export const companies = pgTable('companies', {
   activeManagerId: uuid('active_manager_id'),
   activeTime: integer('active_time').notNull().default(0),
   isCustomer: boolean('is_customer').notNull().default(false),
+  freshdeskId: bigint('freshdesk_id', { mode: 'number' }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
@@ -258,6 +259,8 @@ export const tickets = pgTable('tickets', {
   projectStatusId: integer('project_status_id').references(() => projectStatuses.id, {
     onDelete: 'set null',
   }),
+  /** Origin of the ticket: 'freshdesk' for imported tickets, null for natively created ones. */
+  source: varchar('source', { length: 32 }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
@@ -333,6 +336,8 @@ export const ticketComments = pgTable('ticket_comments', {
   createdAt: ts('created_at').notNull().defaultNow(),
   /** Wall-clock time when the row was actually inserted into the DB. Never back-dated (unlike createdAt for email imports). Used for unread-dot logic. */
   receivedAt: ts('received_at').notNull().defaultNow(),
+  /** Freshdesk conversation ID — used to dedup on re-import/resync. Null for comments created natively. */
+  fdConversationId: bigint('fd_conversation_id', { mode: 'number' }).unique(),
 })
 
 /** One saved AI summary per anchor (per comment, description, or ticket header). */
