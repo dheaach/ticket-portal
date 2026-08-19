@@ -14,6 +14,22 @@ function getConnectionString() {
 
 const connectionString = getConnectionString()
 
+/** Remote Postgres (Lightsail/RDS) often requires SSL; connecting without it yields pg_hba "no encryption". */
+function sslOptionFor(url: string): false | { rejectUnauthorized: false } {
+  if (!url) return false
+  if (/sslmode=/i.test(url)) {
+    const mode = (url.match(/sslmode=([^&]+)/i)?.[1] || '').toLowerCase()
+    if (mode === 'disable' || mode === 'allow') return false
+  }
+  try {
+    const host = new URL(url.replace(/^postgres(ql)?:/i, 'http:')).hostname
+    if (host === 'localhost' || host === '127.0.0.1') return false
+  } catch {
+    return { rejectUnauthorized: false }
+  }
+  return { rejectUnauthorized: false }
+}
+
 /** Vercel/serverless: each isolate is short-lived but many run at once — DB has a global connection cap (e.g. Supabase ~15–60). */
 const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME != null
 
@@ -38,6 +54,7 @@ function createPostgresClient() {
   return postgres(connectionString, {
     prepare: false,
     max: poolMax,
+    ssl: sslOptionFor(connectionString),
     idle_timeout: isServerless ? 20 : 30,
     max_lifetime: isServerless ? 60 * 30 : 60 * 10,
   })

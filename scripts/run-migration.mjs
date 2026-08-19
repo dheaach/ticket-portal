@@ -28,7 +28,17 @@ const migrationPath = isAbsolute(arg)
     : join(__dirname, '../drizzle/migrations', arg)
 
 const migration = readFileSync(migrationPath, 'utf8')
-const sql = postgres(connectionString)
+const host = (() => {
+  try {
+    return new URL(connectionString.replace(/^postgres(ql)?:/i, 'http:')).hostname
+  } catch {
+    return ''
+  }
+})()
+const isLocal = host === 'localhost' || host === '127.0.0.1'
+const sql = postgres(connectionString, {
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+})
 
 try {
   await sql.unsafe(migration)
