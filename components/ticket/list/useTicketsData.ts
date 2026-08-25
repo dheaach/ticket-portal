@@ -393,10 +393,16 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         !isCustomer && (filterTicketType === 'spam' || filterTicketType === 'trash')
       if (inJunkFolder) params.set('ticket_type', filterTicketType!)
       if (!isCustomer) {
-        if (filterCompanyIds.length > 0) params.set('company_ids', filterCompanyIds.join(','))
+        const noCompany = filterCompanyIds.includes('__none__')
+        const realCompanyIds = filterCompanyIds.filter((id) => id !== '__none__')
+        if (noCompany) params.set('no_company', '1')
+        if (realCompanyIds.length > 0) params.set('company_ids', realCompanyIds.join(','))
         if (filterTeamIds.length > 0 && !inJunkFolder) params.set('team_ids', filterTeamIds.join(','))
       }
-      if (filterTagIds.length > 0) params.set('tag_ids', filterTagIds.join(','))
+      const noTags = filterTagIds.includes('__none__')
+      const realTagIds = filterTagIds.filter((id) => id !== '__none__')
+      if (noTags) params.set('no_tags', '1')
+      if (realTagIds.length > 0) params.set('tag_ids', realTagIds.join(','))
       const customerShowsAllStatuses =
         isCustomer &&
         lookupReady &&
@@ -515,7 +521,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setStatusColumns(
           activeList.filter(inKanban).map((s) => ({ id: s.slug, title: statusTitle(s), color: s.color }))
         )
-        setAllStatusColumns(list.map((s) => ({ id: s.slug, title: statusTitle(s), color: s.color })))
+        setAllStatusColumns(activeList.map((s) => ({ id: s.slug, title: statusTitle(s), color: s.color })))
         setAllStatuses(
           list.map((s) => ({
             slug: s.slug,
@@ -607,7 +613,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
 
     applyingFromUrlRef.current = true
 
-    if (hasUrlFilterParams(searchParams)) {
+    if (hasUrlFilterParams(searchParams) || searchParams.get(URL_PARAMS.preset) === '1') {
       let parsed = parseFiltersFromUrl(searchParams, { isCustomer })
       if (!parsed) {
         applyingFromUrlRef.current = false
@@ -658,6 +664,18 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setFilterSearch(parsed.filterSearch)
         setViewMode(parsed.viewMode)
         setFilterSidebarCollapsed(parsed.filterSidebarCollapsed)
+        setFilterTicketType(parsed.filterTicketType ?? null)
+      } else if (searchParams.get(URL_PARAMS.preset) === '1') {
+        // Saved preset navigation: apply ALL fields so absent params (= "all") correctly reset state.
+        applyStatusFromParsed()
+        setFilterTypeIds(parsed.filterTypeIds)
+        setFilterCompanyIds(parsed.filterCompanyIds)
+        setFilterTagIds(parsed.filterTagIds)
+        setFilterTeamIds(parsed.filterTeamIds)
+        setFilterDateRange(parsed.filterDateRange)
+        setFilterDueDateRange(parsed.filterDueDateRange ?? null)
+        setFilterSearch(parsed.filterSearch)
+        setViewMode(parsed.viewMode)
         setFilterTicketType(parsed.filterTicketType ?? null)
       } else {
         /** Only apply fields actually present in the URL. `view` alone (without `status`) used to make parsed.filterStatus [] and overwrite state → unnecessary refetch. */

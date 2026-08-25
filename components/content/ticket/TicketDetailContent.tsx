@@ -245,10 +245,15 @@ export default function TicketDetailContent({
     const [newAttributeValue, setNewAttributeValue] = useState('')
     const [editingDescription, setEditingDescription] = useState(false)
     const editingDescriptionRef = useRef(false)
+    const sidebarSavingRef = useRef(false)
     useEffect(() => {
         editingDescriptionRef.current = editingDescription
     }, [editingDescription])
     const [descriptionValue, setDescriptionValue] = useState(() => (typeof ticketData?.description === 'string' ? ticketData.description : '') || '')
+    const [aiConfigured, setAiConfigured] = useState(false)
+    useEffect(() => {
+        fetch('/api/ai-settings/status').then(r => r.json()).then(j => setAiConfigured(!!j.configured)).catch(() => {})
+    }, [])
     const [editModalVisible, setEditModalVisible] = useState(false)
     const [titleEditing, setTitleEditing] = useState(false)
     const [titleDraft, setTitleDraft] = useState('')
@@ -1047,6 +1052,8 @@ export default function TicketDetailContent({
     const handleSaveSidebarAttributes = async (d: SidebarAttributesDraft) => {
         const tid = displayTicket?.id
         if (tid == null) return
+        if (sidebarSavingRef.current) return
+        sidebarSavingRef.current = true
 
         const useProjectBoard =
             displayTicket?.ticket_type === 'project' &&
@@ -1167,6 +1174,7 @@ export default function TicketDetailContent({
             message.error(e instanceof Error ? e.message : 'Failed to save ticket attributes')
         } finally {
             setSidebarAttributesSaving(false)
+            sidebarSavingRef.current = false
         }
     }
 
@@ -1753,6 +1761,7 @@ export default function TicketDetailContent({
                                                 setDescriptionValue(html)
                                                 setEditingDescription(true)
                                             }}
+                                            aiConfigured={aiConfigured}
                                         />
                                     ),
                                 },

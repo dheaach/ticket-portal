@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { isAdminOrManager } from '@/lib/auth-utils'
 import { db, recurringTicketRuns, recurringTickets } from '@/lib/db'
-import { computeNextRunAt, type Frequency } from '@/lib/recurring-ticket-schedule'
+import { computeNextRunAt, type Frequency, normalizeSpecificDates } from '@/lib/recurring-ticket-schedule'
 import {
   DEFAULT_RECURRING_VISIBILITY,
   isTicketVisibilityLevel,
@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
 
     ticket_type_id,
     contact_user_id,
+    assignee_ids,
     visibility = DEFAULT_RECURRING_VISIBILITY,
   } = body
 
@@ -79,10 +80,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid frequency' }, { status: 400 })
   }
 
+  const specificDates = frequency === 'specific_date' ? normalizeSpecificDates(specific_date) : []
+  if (frequency === 'specific_date' && specificDates.length === 0) {
+    return NextResponse.json({ error: 'Select at least one day of the month' }, { status: 400 })
+  }
+
   const schedule = {
     frequency,
     specificDays: specific_days ?? null,
-    specificDate: specific_date ?? null,
+    specificDate: frequency === 'specific_date' ? specificDates : null,
     intervalDays: interval_days ?? null,
     timeOfDay: time_of_day,
     timezone,
@@ -99,7 +105,7 @@ export async function POST(req: NextRequest) {
       description: description ?? null,
       frequency,
       specificDays: specific_days ?? null,
-      specificDate: specific_date ?? null,
+      specificDate: frequency === 'specific_date' ? specificDates : null,
       intervalDays: interval_days ?? null,
       timeOfDay: time_of_day,
       timezone,
@@ -114,6 +120,7 @@ export async function POST(req: NextRequest) {
 
       ticketTypeId: ticket_type_id ?? null,
       contactUserId: contact_user_id ?? null,
+      assigneeIds: Array.isArray(assignee_ids) ? assignee_ids : [],
       visibility,
       createdBy: session.user.id,
     })

@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, max } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
+import { canEditCompanies } from '@/lib/auth-utils'
 import { companies, companyUsers, db, teams, tickets, users } from '@/lib/db'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 import { upsertCompanyUserMembership } from '@/lib/upsert-company-user-membership'
@@ -98,6 +99,11 @@ export async function POST(request: Request) {
   const session = await auth()
   if (!session?.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const role = (session.user as { role?: string }).role
+  if (!canEditCompanies(role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const body = await request.json()

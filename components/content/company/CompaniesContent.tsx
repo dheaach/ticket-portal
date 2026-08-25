@@ -10,6 +10,7 @@ import { tagPreviewFillHex } from '@/components/common/KanbanTagPreview'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
+import { canEditCompanies } from '@/lib/auth-utils'
 import { kanbanTagStyle } from '@/lib/kanban-tag-chip-style'
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -29,7 +30,7 @@ const { Title } = Typography
 const { Option } = Select
 
 interface CompaniesContentProps {
-  user: { id: string; email?: string | null; name?: string | null }
+  user: { id: string; email?: string | null; name?: string | null; role?: string }
 }
 
 interface CompanyRecord {
@@ -104,6 +105,7 @@ function ColorPickerWithInput({
 
 export default function CompaniesContent({ user: currentUser }: CompaniesContentProps) {
   const router = useRouter()
+  const canEdit = canEditCompanies(currentUser.role)
   const [collapsed, setCollapsed] = useState(false)
   const [companies, setCompanies] = useState<CompanyRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -357,6 +359,8 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               onClick={() => router.push(`/settings/companies/${record.id}`)}
             />
           </Tooltip>
+          {canEdit && (
+            <>
           <Tooltip title="Edit">
             <Button
               type="primary"
@@ -375,6 +379,8 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               <Button type="primary" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
+            </>
+          )}
         </Space>
       ),
     },
@@ -413,6 +419,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                   <Option value={true}>Customer</Option>
                   <Option value={false}>Non-customer</Option>
                 </Select> */}
+                {canEdit && (
                 <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -420,6 +427,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               >
                 Add Company
               </Button>
+                )}
               </Space>
             </div>
 

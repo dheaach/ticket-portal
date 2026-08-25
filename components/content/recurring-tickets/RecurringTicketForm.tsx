@@ -20,6 +20,7 @@ import {
 import dayjs from 'dayjs'
 import { useEffect, useState } from 'react'
 
+import { normalizeSpecificDates } from '@/lib/recurring-ticket-schedule'
 import {
   DEFAULT_RECURRING_VISIBILITY,
   TICKET_VISIBILITY_OPTIONS,
@@ -38,6 +39,11 @@ const DAY_OPTIONS = [
   { label: 'Friday', value: 5 },
   { label: 'Saturday', value: 6 },
 ]
+
+const DATE_OPTIONS = Array.from({ length: 31 }, (_, i) => ({
+  label: String(i + 1),
+  value: i + 1,
+}))
 
 const COMMON_TIMEZONES = [
   'UTC', 'Asia/Jakarta', 'Asia/Singapore', 'Asia/Tokyo', 'Asia/Bangkok',
@@ -84,9 +90,9 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
       const typesArr = Array.isArray(types) ? types : (types.data ?? [])
       setTicketTypes(typesArr.map((t: { id: number | string; title?: string; name?: string; slug?: string }) => ({ label: t.title ?? t.name ?? t.slug ?? String(t.id), value: t.id })))
       const stsArr = Array.isArray(sts) ? sts : (sts.data ?? [])
-      setStatuses(stsArr.map((s: { id?: number; slug?: string; title?: string; name?: string }) => ({ label: s.title ?? s.name ?? s.slug ?? '', value: s.slug ?? String(s.id ?? '') })))
-      setContacts((allUsr.data ?? allUsr ?? []).map((u: { id: string; name?: string; email?: string; firstName?: string; lastName?: string }) => ({
-        label: `${u.name ?? (`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || '')} ${u.email ? `(${u.email})` : ''}`.trim(),
+      setStatuses(stsArr.filter((s: { is_active?: boolean }) => s.is_active !== false).map((s: { id?: number; slug?: string; title?: string; name?: string }) => ({ label: s.title ?? s.name ?? s.slug ?? '', value: s.slug ?? String(s.id ?? '') })))
+      setContacts((allUsr.data ?? allUsr ?? []).map((u: { id: string; full_name?: string; first_name?: string; last_name?: string; email?: string }) => ({
+        label: `${(u.full_name || `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || '')} ${u.email ? `(${u.email})` : ''}`.trim(),
         value: u.id,
       })))
     }).finally(() => setLoadingOptions(false))
@@ -94,12 +100,13 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
 
   useEffect(() => {
     if (initialValues) {
+      const dates = normalizeSpecificDates(initialValues.specificDate)
       form.setFieldsValue({
         title: initialValues.title,
         description: initialValues.description ?? '',
         frequency: initialValues.frequency,
         specific_days: initialValues.specificDays ?? [],
-        specific_date: initialValues.specificDate ?? 1,
+        specific_date: dates.length ? dates : [1],
         interval_days: initialValues.intervalDays ?? 2,
         time_of_day: dayjs(initialValues.timeOfDay, 'HH:mm'),
         timezone: initialValues.timezone,
@@ -112,12 +119,13 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
         team_id: initialValues.teamId ?? null,
         ticket_type_id: initialValues.ticketTypeId ?? null,
         contact_user_id: initialValues.contactUserId ?? null,
+        assignee_ids: Array.isArray(initialValues.assigneeIds) && initialValues.assigneeIds.length > 0 ? initialValues.assigneeIds[0] : null,
       })
     } else {
       form.setFieldsValue({
         frequency: 'daily',
         specific_days: [],
-        specific_date: 1,
+        specific_date: [1],
         interval_days: 2,
         time_of_day: dayjs('08:00', 'HH:mm'),
         timezone: 'Asia/Jakarta',
@@ -137,7 +145,9 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
         description: values.description || null,
         frequency: values.frequency,
         specific_days: values.frequency === 'specific_days' ? values.specific_days : null,
-        specific_date: values.frequency === 'specific_date' ? values.specific_date : null,
+        specific_date: values.frequency === 'specific_date'
+          ? normalizeSpecificDates(values.specific_date)
+          : null,
         interval_days: values.frequency === 'interval' ? values.interval_days : null,
         time_of_day: (values.time_of_day as dayjs.Dayjs).format('HH:mm'),
         timezone: values.timezone,
@@ -151,6 +161,7 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
 
         ticket_type_id: values.ticket_type_id || null,
         contact_user_id: values.contact_user_id || null,
+        assignee_ids: values.assignee_ids ? [values.assignee_ids] : [],
       }
 
       const url = isEdit ? `/api/recurring-tickets/${initialValues!.id}` : '/api/recurring-tickets'
@@ -194,7 +205,7 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
           <Input.TextArea rows={3} placeholder="Optional ticket description" />
         </Form.Item>
 
-        <Divider orientation="left" orientationMargin={0}>
+        <Divider titlePlacement="left" orientationMargin={0}>
           <Text type="secondary" style={{ fontSize: 12 }}>Schedule</Text>
         </Divider>
 
@@ -205,7 +216,7 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
             <Select.Option value="weekdays">Weekdays (Mon–Fri)</Select.Option>
             <Select.Option value="weekends">Weekends (Sat–Sun)</Select.Option>
             <Select.Option value="specific_days">Specific days of the week</Select.Option>
-            <Select.Option value="specific_date">Specific date each month</Select.Option>
+            <Select.Option value="specific_date">Specific dates each month</Select.Option>
             <Select.Option value="interval">Every N days</Select.Option>
           </Select>
         </Form.Item>
@@ -217,8 +228,19 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
           </Form.Item>
         )}
         {frequency === 'specific_date' && (
-          <Form.Item name="specific_date" label="Day of month (1–31)" rules={[{ required: true }]}>
-            <InputNumber min={1} max={31} style={{ width: 120 }} />
+          <Form.Item
+            name="specific_date"
+            label="Days of month (1–31)"
+            rules={[{ required: true, type: 'array', min: 1, message: 'Select at least one date' }]}
+          >
+            <Select
+              mode="multiple"
+              placeholder="Select one or more days"
+              options={DATE_OPTIONS}
+              optionFilterProp="label"
+              maxTagCount="responsive"
+              style={{ width: '100%' }}
+            />
           </Form.Item>
         )}
         {frequency === 'interval' && (
@@ -257,7 +279,7 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
           </Col>
         </Row>
 
-        <Divider orientation="left" orientationMargin={0}>
+        <Divider titlePlacement="left" orientationMargin={0}>
           <Text type="secondary" style={{ fontSize: 12 }}>Ticket Assignment</Text>
         </Divider>
 
@@ -270,18 +292,28 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
             </Form.Item>
           </Col>
           <Col span={12}>
+            <Form.Item name="contact_user_id" label="Contact (email replies)"
+              tooltip="If set, recurring ticket notifications are sent to this user's email; otherwise the company email is used">
+              <Select allowClear showSearch placeholder="Search by name or email"
+                optionFilterProp="label" options={contacts} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={12}>
+          <Col span={12}>
             <Form.Item name="team_id" label="Team">
               <Select allowClear showSearch placeholder="Select team"
                 optionFilterProp="label" options={teams} />
             </Form.Item>
           </Col>
+          <Col span={12}>
+            <Form.Item name="assignee_ids" label="Assignee">
+              <Select allowClear showSearch placeholder="Search by name or email"
+                optionFilterProp="label" options={contacts} />
+            </Form.Item>
+          </Col>
         </Row>
-
-        <Form.Item name="contact_user_id" label="Contact (email replies)"
-          tooltip="If set, recurring ticket notifications are sent to this user's email; otherwise the company email is used">
-          <Select allowClear showSearch placeholder="Select contact user"
-            optionFilterProp="label" options={contacts} />
-        </Form.Item>
 
         <Row gutter={12}>
           <Col span={12}>
@@ -299,7 +331,7 @@ export default function RecurringTicketForm({ initialValues, onSaved, onCancel }
           </Col>
         </Row>
 
-        <Divider orientation="left" orientationMargin={0}>
+        <Divider titlePlacement="left" orientationMargin={0}>
           <Text type="secondary" style={{ fontSize: 12 }}>Ticket Settings</Text>
         </Divider>
 

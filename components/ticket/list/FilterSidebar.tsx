@@ -33,7 +33,7 @@ interface FilterSidebarProps {
   onFilterDueDateRangeChange: (dates: [Dayjs | null, Dayjs | null] | null) => void
   filterSearch: string
   onFilterSearchChange: (v: string) => void
-  allStatuses: { slug: string; title: string }[]
+  allStatuses: { slug: string; title: string; is_active?: boolean }[]
   ticketTypes: Array<{ id: number; title: string; color: string }>
   teams: Array<{ id: string; name: string }>
   companies: Array<{ id: string; name: string }>
@@ -136,7 +136,7 @@ export default function FilterSidebar({
                 style={{ width: '100%' }}
                 value={filterStatus}
                 onChange={(v) => onFilterStatusChange(v ?? [])}
-                options={allStatuses.map((s) => ({
+                options={allStatuses.filter((s) => s.is_active !== false).map((s) => ({
                   value: s.slug,
                   label: ticketStatusDisplayLabel(s),
                 }))}
@@ -200,6 +200,7 @@ export default function FilterSidebar({
                     onChange={(v) => onFilterCompanyIdsChange(v ?? [])}
                     maxTagCount="responsive"
                   >
+                    <Option key="__none__" value="__none__" label="No Company">— No Company</Option>
                     {companies.map((c) => (
                       <Option key={c.id} value={c.id} label={c.name}>{c.name}</Option>
                     ))}
@@ -219,6 +220,7 @@ export default function FilterSidebar({
                     optionLabelProp="label"
                     maxTagCount="responsive"
                   >
+                  <Option key="__none__" value="__none__" label="No Tags">— No Tags</Option>
                     {allTags.map((t) => (
                       <Option key={t.id} value={t.id} label={t.name}>{t.name}</Option>
                     ))}

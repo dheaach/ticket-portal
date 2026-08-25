@@ -73,6 +73,8 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
   const [rules, setRules] = useState<AutomationRuleRecord[]>([])
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [filterCompany, setFilterCompany] = useState<string | null>(null)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingRule, setEditingRule] = useState<AutomationRuleRecord | null>(null)
   const [form] = Form.useForm()
@@ -217,26 +219,15 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
       render: (et: string) => <Tag color="blue">{et}</Tag>,
     },
     {
-      title: 'Conditions',
-      dataIndex: 'conditions',
-      key: 'conditions',
-      ellipsis: true,
-      render: (c: object) => (
-        <Typography.Text code style={{ fontSize: 11 }}>
-          {JSON.stringify(c).slice(0, 50)}…
-        </Typography.Text>
-      ),
-    },
-    {
-      title: 'Actions',
-      dataIndex: 'actions',
-      key: 'actions',
-      ellipsis: true,
-      render: (a: object) => (
-        <Typography.Text code style={{ fontSize: 11 }}>
-          {JSON.stringify(a).slice(0, 60)}…
-        </Typography.Text>
-      ),
+      title: 'Scope',
+      dataIndex: 'company_id',
+      key: 'company_id',
+      width: 150,
+      render: (cid: string | null) => {
+        if (!cid) return <Tag>Global</Tag>
+        const company = companies.find((c) => c.id === cid)
+        return <Tag color="purple">{company?.name ?? cid}</Tag>
+      },
     },
     {
       title: 'Status',
@@ -282,15 +273,44 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
                 <ThunderboltOutlined style={{ marginRight: 8 }} />
                 Automation Rules
               </Title>
-              <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                Add Rule
-              </Button>
+              <Space>
+                <Input.Search
+                  placeholder="Search by name…"
+                  allowClear
+                  style={{ width: 200 }}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="Filter by company"
+                  style={{ width: 180 }}
+                  value={filterCompany ?? undefined}
+                  onChange={(v) => setFilterCompany(v ?? null)}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={[
+                    { value: '__global__', label: 'Global' },
+                    ...companies.map((c) => ({ value: c.id, label: c.name })),
+                  ]}
+                />
+                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+                  Add Rule
+                </Button>
+              </Space>
             </div>
             <Table
               rowKey="id"
               loading={loading}
               columns={columns}
-              dataSource={rules}
+              dataSource={rules.filter((r) => {
+                if (searchText && !(r.name ?? '').toLowerCase().includes(searchText.toLowerCase())) return false
+                if (filterCompany === '__global__' && r.company_id !== null) return false
+                if (filterCompany && filterCompany !== '__global__' && r.company_id !== filterCompany) return false
+                return true
+              })}
               pagination={{ pageSize: 20 }}
             />
 
@@ -324,11 +344,10 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
                     options={[
                       { value: 'ticket_created', label: 'Ticket Created' },
                       { value: 'ticket_updated', label: 'Ticket Updated' },
-                      {
-                        value: 'ticket_comment_added',
-                        label: 'New reply or note (thread / email / internal note)',
-                      },
-                      { value: 'time_trigger', label: 'Time Trigger (not wired yet)' },
+                      { value: 'ticket_reply_added', label: 'New Reply (thread / email / client note)' },
+                      { value: 'ticket_note_added', label: 'New Internal Note' },
+                      { value: 'ticket_comment_added', label: 'New Reply or Note (any)' },
+                      { value: 'time_trigger', label: 'Time Trigger (cron-based)' },
                     ]}
                   />
                 </Form.Item>

@@ -15,9 +15,11 @@ import {
   Button,
   Drawer,
   Empty,
+  Input,
   Layout,
   message,
   Modal,
+  Select,
   Space,
   Switch,
   Table,
@@ -31,6 +33,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
+import { normalizeSpecificDates } from '@/lib/recurring-ticket-schedule'
 
 import RecurringTicketForm from './RecurringTicketForm'
 import RecurringTicketRunsDrawer from './RecurringTicketRunsDrawer'
@@ -45,7 +48,7 @@ export interface RecurringTicketRow {
   description: string | null
   frequency: string
   specificDays: number[] | null
-  specificDate: number | null
+  specificDate: number | number[] | null
   intervalDays: number | null
   timeOfDay: string
   timezone: string
@@ -61,6 +64,7 @@ export interface RecurringTicketRow {
 
   ticketTypeId: number | null
   contactUserId: string | null
+  assigneeIds: string[]
   visibility: string
   createdAt: string
 }
@@ -80,8 +84,12 @@ function freqLabel(row: RecurringTicketRow): string {
   switch (row.frequency) {
     case 'specific_days':
       return `Every ${(row.specificDays ?? []).map((d) => DAY_NAMES[d]).join(', ')}`
-    case 'specific_date':
-      return `Monthly on day ${row.specificDate ?? 1}`
+    case 'specific_date': {
+      const dates = normalizeSpecificDates(row.specificDate)
+      if (dates.length === 0) return 'Monthly'
+      if (dates.length === 1) return `Monthly on day ${dates[0]}`
+      return `Monthly on days ${dates.join(', ')}`
+    }
     case 'interval':
       return `Every ${row.intervalDays ?? 1} day(s)`
     default:
@@ -90,7 +98,7 @@ function freqLabel(row: RecurringTicketRow): string {
 }
 
 interface Props {
-  user: { id: string; email?: string | null; name?: string | null; role?: string | null }
+  user: { id: string; email?: string | null; name?: string | null; role?: string }
 }
 
 export default function RecurringTicketsContent({ user }: Props) {
@@ -98,6 +106,9 @@ export default function RecurringTicketsContent({ user }: Props) {
   const [rows, setRows] = useState<RecurringTicketRow[]>([])
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
+  const [filterCompany, setFilterCompany] = useState<string | undefined>(undefined)
+  const [filterTitle, setFilterTitle] = useState('')
   const [editing, setEditing] = useState<RecurringTicketRow | null>(null)
   const [runsDrawer, setRunsDrawer] = useState<RecurringTicketRow | null>(null)
   const [toggling, setToggling] = useState<string | null>(null)
@@ -119,6 +130,10 @@ export default function RecurringTicketsContent({ user }: Props) {
 
   useEffect(() => {
     fetchRules()
+    fetch('/api/companies', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => setCompanies(j?.data ?? []))
+      .catch(() => {})
   }, [fetchRules])
 
   const handleToggle = async (row: RecurringTicketRow, active: boolean) => {
@@ -319,6 +334,25 @@ export default function RecurringTicketsContent({ user }: Props) {
               <Text type="secondary">Automatically create tickets on a recurring schedule.</Text>
             </div>
             <Space>
+              <Input.Search
+                placeholder="Search by title…"
+                allowClear
+                style={{ width: 200 }}
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+              <Select
+                allowClear
+                showSearch
+                placeholder="Filter by company"
+                style={{ width: 200 }}
+                value={filterCompany}
+                onChange={setFilterCompany}
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={companies.map((c) => ({ value: c.id, label: c.name }))}
+              />
               <Button icon={<ReloadOutlined />} onClick={fetchRules} loading={loading} />
               <Button
                 type="primary"
@@ -331,7 +365,11 @@ export default function RecurringTicketsContent({ user }: Props) {
           </div>
 
           <Table
-            dataSource={rows}
+            dataSource={rows.filter((r) => {
+              if (filterCompany && r.companyId !== filterCompany) return false
+              if (filterTitle && !r.title.toLowerCase().includes(filterTitle.toLowerCase())) return false
+              return true
+            })}
             columns={columns}
             rowKey="id"
             loading={loading}
