@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm'
 
-import { db, tags, teams, ticketActivityLog, ticketAssignees, tickets, ticketTags, users } from '@/lib/db'
+import { db, projectStatuses, tags, teams, ticketActivityLog, ticketAssignees, tickets, ticketStatuses, ticketTags, users } from '@/lib/db'
 
 import type { TicketActivityAction } from './ticket-activity-actions'
 
@@ -114,8 +114,8 @@ export function diffTicketSnapshots(
 /** Resolve UUIDs in activity `changes` to display names for ticket activity UI. */
 export async function enrichActivityEntityLabels(
   changes: Record<string, { from: unknown; to: unknown }>
-): Promise<{ teams?: Record<string, string>; tags?: Record<string, string>; contacts?: Record<string, string> }> {
-  const out: { teams?: Record<string, string>; tags?: Record<string, string>; contacts?: Record<string, string> } = {}
+): Promise<{ teams?: Record<string, string>; tags?: Record<string, string>; contacts?: Record<string, string>; assignees?: Record<string, string>; statuses?: Record<string, string>; project_statuses?: Record<string, string> }> {
+  const out: { teams?: Record<string, string>; tags?: Record<string, string>; contacts?: Record<string, string>; assignees?: Record<string, string>; statuses?: Record<string, string>; project_statuses?: Record<string, string> } = {}
 
   // Teams
   const teamDelta = changes.teamId
@@ -128,6 +128,20 @@ export async function enrichActivityEntityLabels(
       const map: Record<string, string> = {}
       for (const r of rows) map[r.id] = (r.name?.trim() || r.id) as string
       out.teams = map
+    }
+  }
+
+  // Statuses
+  const statusDelta = changes.status
+  if (statusDelta) {
+    const slugs = new Set<string>()
+    if (statusDelta.from != null && statusDelta.from !== '') slugs.add(String(statusDelta.from))
+    if (statusDelta.to != null && statusDelta.to !== '') slugs.add(String(statusDelta.to))
+    if (slugs.size > 0) {
+      const rows = await db.select({ slug: ticketStatuses.slug, title: ticketStatuses.title }).from(ticketStatuses).where(inArray(ticketStatuses.slug, [...slugs]))
+      const map: Record<string, string> = {}
+      for (const r of rows) map[r.slug] = (r.title?.trim() || r.slug) as string
+      out.statuses = map
     }
   }
 
@@ -146,6 +160,21 @@ export async function enrichActivityEntityLabels(
     }
   }
 
+  // Assignees
+  const assigneeDelta = changes.assignee_ids
+  if (assigneeDelta) {
+    const ids = new Set<string>()
+    for (const arr of [assigneeDelta.from, assigneeDelta.to]) {
+      if (Array.isArray(arr)) for (const id of arr) if (id) ids.add(String(id))
+    }
+    if (ids.size > 0) {
+      const rows = await db.select({ id: users.id, fullName: users.fullName, email: users.email }).from(users).where(inArray(users.id, [...ids]))
+      const map: Record<string, string> = {}
+      for (const r of rows) map[r.id] = (r.fullName?.trim() || r.email || r.id) as string
+      out.assignees = map
+    }
+  }
+
   // Contact
   const contactDelta = changes.contactUserId
   if (contactDelta) {
@@ -157,6 +186,22 @@ export async function enrichActivityEntityLabels(
       const map: Record<string, string> = {}
       for (const r of rows) map[r.id] = (r.fullName?.trim() || r.email || r.id) as string
       out.contacts = map
+    }
+  }
+
+  // Project statuses
+  const projectStatusDelta = changes.project_status_id
+  if (projectStatusDelta) {
+    const ids = new Set<number>()
+    for (const v of [projectStatusDelta.from, projectStatusDelta.to]) {
+      const n = Number(v)
+      if (v != null && v !== '' && !isNaN(n)) ids.add(n)
+    }
+    if (ids.size > 0) {
+      const rows = await db.select({ id: projectStatuses.id, title: projectStatuses.title }).from(projectStatuses).where(inArray(projectStatuses.id, [...ids]))
+      const map: Record<string, string> = {}
+      for (const r of rows) map[String(r.id)] = (r.title?.trim() || String(r.id)) as string
+      out.project_statuses = map
     }
   }
 

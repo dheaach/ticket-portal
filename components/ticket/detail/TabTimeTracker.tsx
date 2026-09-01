@@ -4,6 +4,7 @@ import {
   ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   StopOutlined,
@@ -95,6 +96,10 @@ export interface TabTimeTrackerProps {
   manualUserOptions?: TimeTrackerManualUserOption[]
   /** Admin/manager: override reported duration (billing) without changing tracked time */
   canAdjustReportedDuration?: boolean
+  /** Admin only: edit start/stop window in Adjust tracker */
+  canAdjustStartStop?: boolean
+  /** Admin/manager: add manual time entries */
+  canAddManual?: boolean
 }
 
 export default function TabTimeTracker({
@@ -112,8 +117,11 @@ export default function TabTimeTracker({
   canManageOthersTime = false,
   manualUserOptions = [],
   canAdjustReportedDuration = false,
+  canAdjustStartStop = false,
+  canAddManual = false,
 }: TabTimeTrackerProps) {
   const ticketId = ticketData?.id as number
+  const [paused, setPaused] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
   const [adjustTrackerOpen, setAdjustTrackerOpen] = useState(false)
   const [adjustTrackerSession, setAdjustTrackerSession] = useState<Record<string, unknown> | null>(null)
@@ -371,9 +379,11 @@ export default function TabTimeTracker({
               Total (reported): {formatTime(totalTimeSeconds + (activeTimeTracker ? currentTime : 0))}
             </Text>
           </Space>
-          <Button type="primary"  icon={<PlusOutlined />} onClick={openManual}>
-            Add manual
-          </Button>
+          {canAddManual && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={openManual}>
+              Add manual
+            </Button>
+          )}
         </Flex>
         <Space orientation="vertical" style={{ width: '100%' }} size="middle">
           <Space wrap align="center">
@@ -391,10 +401,17 @@ export default function TabTimeTracker({
             {activeTimeTracker ? (
               <>
                 <Button
+                  icon={<PauseCircleOutlined />}
+                  onClick={() => { setPaused(true); onStopTimeTracker() }}
+                  loading={timeTrackerLoading}
+                >
+                  Pause
+                </Button>
+                <Button
                   type="primary"
                   danger
                   icon={<StopOutlined />}
-                  onClick={onStopTimeTracker}
+                  onClick={() => { setPaused(false); onStopTimeTracker() }}
                   loading={timeTrackerLoading}
                 >
                   Stop
@@ -403,6 +420,25 @@ export default function TabTimeTracker({
                   {formatTime(currentTime)}
                 </Text>
                 <Text type="secondary">(running)</Text>
+              </>
+            ) : paused ? (
+              <>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => { setPaused(false); void onStartTimeTracker(timerJobType) }}
+                  loading={timeTrackerLoading}
+                >
+                  Resume
+                </Button>
+                <Button
+                  danger
+                  icon={<StopOutlined />}
+                  onClick={() => setPaused(false)}
+                >
+                  Stop
+                </Button>
+                <Text type="warning" strong>Paused</Text>
               </>
             ) : (
               <Button
@@ -674,7 +710,7 @@ export default function TabTimeTracker({
           <Form.Item
             name="range"
             label="Start — Stop"
-            rules={[{ required: true, message: 'Select start and end' }]}
+            rules={[{ required: canAdjustStartStop, message: 'Select start and end' }]}
           >
             <RangePicker
               showTime
@@ -682,6 +718,7 @@ export default function TabTimeTracker({
               format="YYYY-MM-DD HH:mm"
               disabledDate={disabledDateNotAfterToday}
               disabledTime={(d) => getDisabledTimeNotAfterNow(d)}
+              disabled={!canAdjustStartStop}
             />
           </Form.Item>
           <Form.Item

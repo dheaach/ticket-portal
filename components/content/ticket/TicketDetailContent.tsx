@@ -21,6 +21,7 @@ import {
     Divider,
     Flex,
     Form,
+    Grid,
     Input,
     Layout,
     message,
@@ -33,6 +34,8 @@ import {
     Tooltip,
     Typography,
 } from 'antd'
+
+const { useBreakpoint } = Grid
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef,useState } from 'react'
 
@@ -197,6 +200,9 @@ export default function TicketDetailContent({
     variant = 'admin',
 }: TicketDetailContentProps) {
     const router = useRouter()
+    const screens = useBreakpoint()
+    const isMobile = !screens.md
+    const [attrSidebarCollapsed, setAttrSidebarCollapsed] = useState(false)
     const [displayTicket, setDisplayTicket] = useState(ticketData)
     const liveSyncTicketIdRef = useRef<number | undefined>(ticketData?.id)
     liveSyncTicketIdRef.current = displayTicket?.id
@@ -212,7 +218,7 @@ export default function TicketDetailContent({
         setTicketCcEmailsState(initialTicketCcEmails)
     }, [ticketData?.id, initialScreenshots, initialTicketCcEmails])
 
-    const [collapsed, setCollapsed] = useState(false)
+    const [collapsed, setCollapsed] = useState(true)
     const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>(initialChecklistItems)
     const [comments, setComments] = useState<Comment[]>(initialComments)
     const [commentsHasOlder, setCommentsHasOlder] = useState(initialCommentsHasOlder)
@@ -291,6 +297,7 @@ export default function TicketDetailContent({
     const [sidebarAttributesSaving, setSidebarAttributesSaving] = useState(false)
     const [activityRefreshKey, setActivityRefreshKey] = useState(0)
     const bumpActivityRefresh = useCallback(() => setActivityRefreshKey((k) => k + 1), [])
+
     // Mark ticket as read when user views it
     useEffect(() => {
         if (!displayTicket?.id) return
@@ -1403,9 +1410,18 @@ export default function TicketDetailContent({
         <Layout style={{ minHeight: '100vh' }}>
             <AdminSidebar user={currentUser} collapsed={collapsed} onCollapse={setCollapsed} />
             <AdminMainColumn collapsed={collapsed} user={currentUser}>
-                <Content style={{ padding: '24px', background: 'var(--layout-bg)', minHeight: 'calc(100vh - 56px)' }}>
-                    <Card style={{ margin: '0 auto' }}>
-                        <Flex gap={16} align="center" wrap="wrap" style={{ marginBottom: 24 }}>
+                <Content style={{ padding: '0', background: 'var(--layout-bg)', minHeight: 'calc(100vh - 56px)' }}>
+                    <div style={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 100,
+                        background: 'var(--ant-color-bg-container, #fff)',
+                        borderBottom: '1px solid var(--ant-color-border-secondary, #f0f0f0)',
+                        padding: isMobile ? '8px 12px' : '12px 24px',
+                        paddingRight: isMobile ? '12px' : 'calc(var(--attr-sidebar-width, 0px) + 24px)',
+                        transition: 'padding-right 0.2s',
+                    }}>
+                        <Flex gap={16} align="center" wrap="wrap">
                             <Button
                                 icon={<ArrowLeftOutlined />}
                                 onClick={() => {
@@ -1458,7 +1474,7 @@ export default function TicketDetailContent({
                                                         value={titleDraft}
                                                         onChange={(e) => setTitleDraft(e.target.value)}
                                                         onPressEnter={() => void handleSaveTitle()}
-                                                        style={{ minWidth: 300, flex: '1 1 240px', maxWidth: 560 }}
+                                                        style={{ minWidth: isMobile ? 0 : 300, flex: '1 1 120px', maxWidth: 560 }}
                                                         disabled={loading}
                                                         aria-label="Ticket title"
                                                     />
@@ -1603,9 +1619,9 @@ export default function TicketDetailContent({
                                 />
                             </div>
                         </Flex>
-
-                            
-                        <Divider />
+                    </div>
+                    <div style={{ padding: isMobile ? '12px' : '24px', paddingRight: isMobile ? '12px' : 'calc(var(--attr-sidebar-width, 0px) + 24px)', transition: 'padding-right 0.2s' }}>
+                    <Card style={{ margin: '0 auto' }}>
 
                         {isCustomer ? (
                             <TabGeneralCustomer
@@ -1762,6 +1778,8 @@ export default function TicketDetailContent({
                                                 setEditingDescription(true)
                                             }}
                                             aiConfigured={aiConfigured}
+                                            rightCollapsed={attrSidebarCollapsed}
+                                            onRightCollapsedChange={setAttrSidebarCollapsed}
                                         />
                                     ),
                                 },
@@ -1809,6 +1827,8 @@ export default function TicketDetailContent({
                                             canManageOthersTime={isTicketAdmin}
                                             manualUserOptions={timeTrackerManualUserOptions}
                                             canAdjustReportedDuration={canAdjustReportedDuration}
+                                            canAdjustStartStop={canAdjustReportedDuration}
+                                            canAddManual={canAdjustReportedDuration}
                                         />
                                     ),
                                 },
@@ -1831,8 +1851,7 @@ export default function TicketDetailContent({
                         />
                         )}
                     </Card>
-
-                   
+                    </div>
                 </Content>
             </AdminMainColumn>
         </Layout>

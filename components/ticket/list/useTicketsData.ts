@@ -349,11 +349,14 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
 
   const queryClient = useQueryClient()
 
+  // list/card have built-in pagination so fetch all; kanban/RR show cards at once → use user limit
+  const effectiveTicketsLimit = (viewMode === 'list' || viewMode === 'card') ? 9999 : ticketsPageLimit
+
   const ticketsListQueryKey = useMemo(
     () =>
       buildTicketsListQueryKey({
         isCustomer,
-        ticketsPageLimit,
+        ticketsPageLimit: effectiveTicketsLimit,
         filterCompanyIds,
         filterStatus,
         filterTypeIds,
@@ -367,7 +370,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       }),
     [
       isCustomer,
-      ticketsPageLimit,
+      effectiveTicketsLimit,
       filterCompanyIds,
       filterStatus,
       filterTypeIds,
@@ -397,7 +400,10 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         const realCompanyIds = filterCompanyIds.filter((id) => id !== '__none__')
         if (noCompany) params.set('no_company', '1')
         if (realCompanyIds.length > 0) params.set('company_ids', realCompanyIds.join(','))
-        if (filterTeamIds.length > 0 && !inJunkFolder) params.set('team_ids', filterTeamIds.join(','))
+        const noTeam = filterTeamIds.includes('__none__')
+        const realTeamIds = filterTeamIds.filter((id) => id !== '__none__')
+        if (noTeam && !inJunkFolder) params.set('no_team', '1')
+        if (realTeamIds.length > 0 && !inJunkFolder) params.set('team_ids', realTeamIds.join(','))
       }
       const noTags = filterTagIds.includes('__none__')
       const realTagIds = filterTagIds.filter((id) => id !== '__none__')
@@ -428,7 +434,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         const sb = searchParams.get('search_by')
         if (sb && (sb === 'title' || sb === 'id')) params.set('search_by', sb)
       }
-      params.set('limit', String(ticketsPageLimit))
+      params.set('limit', String(effectiveTicketsLimit))
 
       const qs = params.toString()
       const url = qs ? `/api/tickets?${qs}` : '/api/tickets'
@@ -675,7 +681,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setFilterDateRange(parsed.filterDateRange)
         setFilterDueDateRange(parsed.filterDueDateRange ?? null)
         setFilterSearch(parsed.filterSearch)
-        setViewMode(parsed.viewMode)
+        if (searchParams.has(URL_PARAMS.view)) setViewMode(parsed.viewMode)
         setFilterTicketType(parsed.filterTicketType ?? null)
       } else {
         /** Only apply fields actually present in the URL. `view` alone (without `status`) used to make parsed.filterStatus [] and overwrite state → unnecessary refetch. */
