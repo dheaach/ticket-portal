@@ -59,6 +59,7 @@ interface LeaderOption {
 interface TeamOption {
   id: string
   name: string
+  member_count?: number
 }
 
 interface ManagerOption {
@@ -172,6 +173,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
         (rows || []).map((t) => ({
           id: t.id,
           name: t.name,
+          member_count: t.member_count,
         }))
       )
     } catch {
@@ -311,7 +313,15 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       key: 'active_team_id',
       render: (_: unknown, record: CompanyRecord) => {
         const team = teamOptions.find((t) => t.id === record.active_team_id)
-        return team ? <Tag color="blue">{team.name}</Tag> : '—'
+        if (!team) return '—'
+        return (
+          <Space size={4}>
+            <Tag color="blue">{team.name}</Tag>
+            {team.member_count != null && (
+              <Tag color="default" style={{ fontSize: 11 }}>{team.member_count} member{team.member_count !== 1 ? 's' : ''}</Tag>
+            )}
+          </Space>
+        )
       },
     },
     {
@@ -319,7 +329,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       key: 'active_manager_id',
       render: (_: unknown, record: CompanyRecord) => {
         const mgr = managerOptions.find((m) => m.id === record.active_manager_id)
-        return mgr ? (mgr.full_name || mgr.email) : '—'
+        return mgr ? <Tag color="purple">{mgr.full_name || mgr.email}</Tag> : '—'
       },
     },
     {

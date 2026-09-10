@@ -45,7 +45,8 @@ import {
 
 const { useBreakpoint } = Grid
 import dayjs from 'dayjs'
-import React, { useEffect, useMemo,useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import DateDisplay from '@/components/common/DateDisplay'
 import { sanitizeRichHtml } from '@/lib/sanitize-rich-html'
@@ -55,7 +56,9 @@ import CommentComposer from './CommentComposer'
 import CommentHtml from './CommentHtml'
 import CommentTaggedCcLines from './CommentTaggedCcLines'
 import CommentWysiwyg from './CommentWysiwyg'
+import CompanyTodayTotal from './CompanyTodayTotal'
 import TicketUserMention from './TicketUserMention'
+import TrackerElapsed from './TrackerElapsed'
 
 const { Text, Paragraph } = Typography
 
@@ -236,7 +239,6 @@ interface TabGeneralProps {
   onSaveSidebarAttributes: (draft: SidebarAttributesDraft) => Promise<void>
   totalTimeSeconds: number
   activeTimeTracker: any
-  currentTime: number
   formatTime: (seconds: number) => string
   comments: Comment[]
   currentUserId: string
@@ -322,7 +324,6 @@ export default function TabGeneral({
   onSaveSidebarAttributes,
   totalTimeSeconds,
   activeTimeTracker,
-  currentTime,
   formatTime,
   comments,
   currentUserId,
@@ -442,6 +443,10 @@ export default function TabGeneral({
   } | null>(null)
   const [companyAttrs, setCompanyAttrs] = useState<CompanyAttr[]>([])
   const [topTickets, setTopTickets] = useState<TopTicket[]>([])
+  const [companyTodaySeconds, setCompanyTodaySeconds] = useState<number | null>(null)
+  const [companyHasActiveTracker, setCompanyHasActiveTracker] = useState(false)
+  const [companyActiveTrackerUser, setCompanyActiveTrackerUser] = useState<string | null>(null)
+  const [companyActiveTrackerStart, setCompanyActiveTrackerStart] = useState<string | null>(null)
 
   useEffect(() => {
     const cid = ticketData?.company_id
@@ -454,11 +459,23 @@ export default function TabGeneral({
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j?.data) setCompanyAttrs(j.data) })
       .catch(() => {})
-    fetch(`/api/companies/${cid}/tickets?limit=5`, { credentials: 'include' })
+    fetch(`/api/companies/${cid}/tickets?limit=5&exclude=client_review,closed,pending`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j?.data) setTopTickets(j.data) })
       .catch(() => {})
+    fetch(`/api/tickets/company-time-stats?company_ids=${cid}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (Array.isArray(j) && j[0]) {
+          setCompanyTodaySeconds(j[0].today_seconds)
+          setCompanyHasActiveTracker(j[0].has_active_tracker ?? false)
+          setCompanyActiveTrackerUser(j[0].active_tracker_user_name ?? null)
+          setCompanyActiveTrackerStart(j[0].active_tracker_start_time ?? null)
+        }
+      })
+      .catch(() => {})
   }, [ticketData?.company_id, companyCollapsed])
+
 
   const statusSelectOptions = useMemo(() => {
     const cur = sidebarDraft.status as string | undefined
@@ -804,7 +821,7 @@ export default function TabGeneral({
                         <Space orientation="vertical" size="small" style={{ width: '100%', marginTop: 4 }}>
                         
                           {editingComment === comment.id ? (
-                            <Flex vertical gap={40} style={{ width: '100%' }}>
+                            <Flex vertical gap={8} style={{ width: '100%' }}>
                               <CommentWysiwyg
                                 ticketId={ticketData?.id}
                                 value={editingCommentValue}
@@ -907,7 +924,7 @@ export default function TabGeneral({
         )}
 
         {/* Attributes sidebar — left of company */}
-        {!isMobile && <div style={{
+        {!isMobile && createPortal(<div style={{
             width: ATTR_W,
             position: 'fixed',
             right: COMP_W,
@@ -1129,7 +1146,9 @@ export default function TabGeneral({
               <Text style={LBL}>Total Time Tracked</Text>
               <Space>
                 <ClockCircleOutlined style={{ color: 'rgba(255,255,255,0.65)' }} />
-                <Text style={{ color: '#fff', fontWeight: 600 }}>{formatTime(totalTimeSeconds + (activeTimeTracker ? currentTime : 0))}</Text>
+                <Text style={{ color: '#fff', fontWeight: 600 }}>
+                  <TrackerElapsed totalTimeSeconds={totalTimeSeconds} activeTimeTracker={activeTimeTracker} formatTime={formatTime} />
+                </Text>
               </Space>
             </div>
 
@@ -1180,10 +1199,10 @@ export default function TabGeneral({
           </div>
           </>
           )}
-        </div>}
+        </div>, document.body)}
 
         {/* Company Info sidebar — paling kanan, right: 0 */}
-        {!isMobile && <div style={{
+        {!isMobile && createPortal(<div style={{
             width: COMP_W,
             position: 'fixed',
             right: 0,
@@ -1271,6 +1290,16 @@ export default function TabGeneral({
                     )}
                   </Space>
 
+                  {/* Today total hours + active tracker — isolated component owns its own 1s timer */}
+                  {companyTodaySeconds !== null && (
+                    <CompanyTodayTotal
+                      completedSeconds={companyTodaySeconds}
+                      hasActiveTracker={companyHasActiveTracker}
+                      activeTrackerUserName={companyActiveTrackerUser}
+                      activeTrackerStartTime={companyActiveTrackerStart}
+                    />
+                  )}
+
                   {/* Top tickets */}
                   {topTickets.length > 0 && (
                     <div>
@@ -1331,7 +1360,7 @@ export default function TabGeneral({
               )}
             </div>
           )}
-        </div>}
+        </div>, document.body)}
 
         {/* Mobile Drawers */}
         <Drawer
