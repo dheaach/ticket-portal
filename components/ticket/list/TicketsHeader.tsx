@@ -1,7 +1,7 @@
 'use client'
 
-import { AppstoreOutlined, IdcardOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined, UnorderedListOutlined } from '@ant-design/icons'
-import { Button, Flex, Input, Segmented, Select, Tooltip, Typography } from 'antd'
+import { AppstoreOutlined, IdcardOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { Button, ConfigProvider, Flex, Input, Segmented, Select, theme, Tooltip, Typography } from 'antd'
 
 import { TICKETS_PAGE_LIMIT_OPTIONS, type TicketsPageLimit } from '@/lib/tickets-list-query'
 
@@ -36,6 +36,16 @@ export default function TicketsHeader({
   onTicketsPageLimitChange,
   onRefresh,
 }: TicketsHeaderProps) {
+  const { token } = theme.useToken()
+  const searchPending = loading && !!filterSearch.trim()
+
+  function handleViewModeChange(v: ViewMode) {
+    if ((v === 'kanban' || v === 'roundrobin') && filterSearch.trim()) {
+      onFilterSearchChange?.('')
+    }
+    onViewModeChange(isCustomer && v === 'roundrobin' ? 'kanban' : (v as ViewMode))
+  }
+
   const inJunkFolder = !isCustomer && (filterTicketType === 'spam' || filterTicketType === 'trash')
   const junkTitle =
     filterTicketType === 'spam' ? 'Spam' : filterTicketType === 'trash' ? 'Trash' : null
@@ -47,65 +57,72 @@ export default function TicketsHeader({
   ]
 
   return (
-    <Flex justify="space-between" align="flex-start" gap={16} style={{ padding: 24 }} wrap="wrap">
-      <Flex vertical gap={12} style={{ flex: 1, minWidth: 0 }}>
-        <Flex align="center" justify="space-between" wrap="wrap" gap={16}>
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            {junkTitle ?? 'My Tickets'}
-          </Typography.Title>
-          {!inJunkFolder && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={onCreateClick} loading={loading}>
-              Add Ticket
-            </Button>
-          )}
-        </Flex>
+    <Flex vertical gap={12} style={{ padding: 24 }}>
+      <Typography.Title level={2} style={{ margin: 0 }}>
+        {junkTitle ?? 'My Tickets'}
+      </Typography.Title>
 
-        {!inJunkFolder && (
-        <Flex>
-        <Segmented
-            value={isCustomer && viewMode === 'roundrobin' ? 'kanban' : viewMode}
-            onChange={(v) => onViewModeChange(isCustomer && v === 'roundrobin' ? 'kanban' : (v as ViewMode))}
-            options={viewOptions}
-            size="large"
-          />
-        </Flex>
-        )}
-
-        <Flex align="center" gap={16} wrap="wrap">
-          <Input
-            placeholder="Search by ID, title or description..."
-            allowClear
-            value={filterSearch}
-            onChange={(e) => onFilterSearchChange?.(e.target.value)}
-            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-            style={{ minWidth: 320, width: '100%', maxWidth: 400 }}
-          />
-{onTicketsPageLimitChange && (
-            <Flex align="center" gap={8}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Load
-              </Typography.Text>
-              <Select
-                value={ticketsPageLimit}
-                onChange={(v) => onTicketsPageLimitChange(v as TicketsPageLimit)}
-                options={TICKETS_PAGE_LIMIT_OPTIONS.map((n) => ({ value: n, label: String(n) }))}
-                style={{ width: 72 }}
-                aria-label="Tickets per load"
-              />
-            </Flex>
-          )}
-          {!inJunkFolder && onRefresh && (
-            <Tooltip title="Refresh tickets">
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={onRefresh}
-                loading={loading}
+      {!inJunkFolder && (
+        <Flex align="center" justify="space-between" gap={12} wrap="wrap">
+          <Flex align="center" gap={12} wrap="wrap">
+            <ConfigProvider theme={{ components: { Segmented: { trackBg: token.colorBgContainer, itemSelectedBg: '#667eea', itemSelectedColor: '#fff' } } }}>
+              <Segmented
+                value={isCustomer && viewMode === 'roundrobin' ? 'kanban' : viewMode}
+                onChange={(v) => handleViewModeChange(v as ViewMode)}
+                options={viewOptions}
                 size="middle"
+                style={{ border: '1px solid var(--ant-color-border)' }}
               />
-            </Tooltip>
-          )}
+            </ConfigProvider>
+            {(viewMode === 'list' || viewMode === 'card') && (
+              <Input
+                placeholder="Search by ID, title or description..."
+                allowClear
+                value={filterSearch}
+                onChange={(e) => onFilterSearchChange?.(e.target.value)}
+                prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                suffix={searchPending ? <LoadingOutlined style={{ color: '#bfbfbf' }} spin /> : undefined}
+                style={{ minWidth: 280, width: 340 }}
+              />
+            )}
+            {onTicketsPageLimitChange && (viewMode === 'kanban' || viewMode === 'roundrobin') && (
+              <Flex align="center" gap={8}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Load
+                </Typography.Text>
+                <Select
+                  value={ticketsPageLimit}
+                  onChange={(v) => onTicketsPageLimitChange(v as TicketsPageLimit)}
+                  options={TICKETS_PAGE_LIMIT_OPTIONS.map((n) => ({ value: n, label: String(n) }))}
+                  style={{ width: 72 }}
+                  aria-label="Tickets per load"
+                />
+              </Flex>
+            )}
+            {onRefresh && (
+              <Tooltip title="Refresh tickets">
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={onRefresh}
+                  loading={loading}
+                  size="middle"
+                />
+              </Tooltip>
+            )}
+          </Flex>
+          <Button type="primary" icon={<PlusOutlined />} onClick={onCreateClick} loading={loading}>
+            Add Ticket
+          </Button>
         </Flex>
-      </Flex>
+      )}
+
+      {inJunkFolder && onRefresh && (
+        <Flex>
+          <Tooltip title="Refresh tickets">
+            <Button icon={<ReloadOutlined />} onClick={onRefresh} loading={loading} size="middle" />
+          </Tooltip>
+        </Flex>
+      )}
     </Flex>
   )
 }

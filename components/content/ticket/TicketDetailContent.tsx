@@ -9,6 +9,7 @@ import {
     EditOutlined,
     FolderOutlined,
     LeftOutlined,
+    PrinterOutlined,
     RightOutlined,
     WarningOutlined,
     WarningTwoTone,
@@ -308,29 +309,33 @@ export default function TicketDetailContent({
     }, [displayTicket?.id])
 
     const contactUserOptionsForTicket = useMemo(() => {
-        const withEmail = (users || []).filter((u: { email?: string }) => String(u?.email || '').trim()) as Array<{
-            id: string
-            full_name?: string | null
-            email: string
-            company_id?: string | null
-        }>
-        const mapped = withEmail.map((u) => ({
-            id: u.id,
-            full_name: u.full_name ?? null,
-            email: u.email,
-            company_id: u.company_id ?? null,
-        }))
-        const cid = displayTicket?.company_id
-        if (!cid) return mapped
-        return [...mapped].sort((a, b) => {
-            const as = a.company_id === cid ? 0 : 1
-            const bs = b.company_id === cid ? 0 : 1
-            if (as !== bs) return as - bs
-            const al = (a.full_name || a.email).toLowerCase()
-            const bl = (b.full_name || b.email).toLowerCase()
-            return al.localeCompare(bl)
+        const agentUsers = (users || [])
+            .filter((u: { email?: string; role?: string }) => String(u?.email || '').trim() && (u?.role ?? '').toLowerCase() !== 'customer')
+            .map((u: { id: string; full_name?: string | null; email: string; company_id?: string | null }) => ({
+                id: u.id,
+                full_name: u.full_name ?? null,
+                email: u.email,
+                company_id: u.company_id ?? null,
+                _type: 'agent' as const,
+            }))
+        const customerUsers = (companyCustomers || [])
+            .filter((u) => String(u?.email || '').trim())
+            .map((u) => ({
+                id: u.id,
+                full_name: u.full_name ?? null,
+                email: u.email,
+                company_id: displayTicket?.company_id ?? null,
+                _type: 'customer' as const,
+            }))
+        // Customers first, then agents; deduplicate by id (customer wins if same id)
+        const seen = new Set<string>()
+        const merged = [...customerUsers, ...agentUsers].filter((u) => {
+            if (seen.has(u.id)) return false
+            seen.add(u.id)
+            return true
         })
-    }, [users, displayTicket?.company_id])
+        return merged
+    }, [users, companyCustomers, displayTicket?.company_id])
 
     // Default status labels/colors when DB has no ticket_statuses (matches seeded slugs)
     const DEFAULT_STATUS_MAP: Record<string, { title: string; color: string }> = {
@@ -1082,6 +1087,7 @@ export default function TicketDetailContent({
             const res = await apiFetch<{
                 ticket_cross_company_warning?: string
                 company_id?: string | null
+                contact_user_id?: string | null
             }>(`/api/tickets/${tid}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -1106,15 +1112,18 @@ export default function TicketDetailContent({
                 email: string
                 avatar_url?: string | null
             }>
-            const contactRow = d.contactUserId ? fromLists.find((u) => u.id === d.contactUserId) : null
 
             const syncedCompanyId =
                 res && typeof res === 'object' && 'company_id' in res ? res.company_id : undefined
+            const contactClearedByServer =
+                res && typeof res === 'object' && 'contact_user_id' in res && res.contact_user_id === null
 
             setDisplayTicket((prev: any) => {
                 if (!prev) return prev
                 const nextCompanyId =
                     syncedCompanyId !== undefined ? syncedCompanyId : (d.companyId ?? prev.company_id)
+                const nextContactId = contactClearedByServer ? null : d.contactUserId
+                const nextContactRow = nextContactId ? fromLists.find((u) => u.id === nextContactId) : null
 
                 return {
                     ...prev,
@@ -1136,13 +1145,13 @@ export default function TicketDetailContent({
                     priority: priorityPayload,
                     company_id: nextCompanyId,
                     company: nextCompanyId ? companies.find((c) => c.id === nextCompanyId) ?? prev.company : null,
-                    contact_user_id: d.contactUserId,
-                    contact: contactRow
+                    contact_user_id: nextContactId,
+                    contact: nextContactRow
                         ? {
-                              id: contactRow.id,
-                              full_name: contactRow.full_name ?? null,
-                              email: contactRow.email,
-                              avatar_url: contactRow.avatar_url ?? null,
+                              id: nextContactRow.id,
+                              full_name: nextContactRow.full_name ?? null,
+                              email: nextContactRow.email,
+                              avatar_url: nextContactRow.avatar_url ?? null,
                           }
                         : null,
                     due_date: d.dueDate,
@@ -1592,6 +1601,12 @@ export default function TicketDetailContent({
                                                     Mark as support
                                                 </Button>
                                             )}
+                                            <Tooltip title="Print ticket">
+                                                <Button
+                                                    icon={<PrinterOutlined />}
+                                                    onClick={() => window.open(`/tickets/${displayTicket.id}/print`, '_blank')}
+                                                />
+                                            </Tooltip>
                                         </div>
                                     )}
                                 </div>

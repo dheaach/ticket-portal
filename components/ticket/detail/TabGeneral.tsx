@@ -224,6 +224,7 @@ interface TabGeneralProps {
     full_name: string | null
     email: string
     company_id?: string | null
+    _type?: 'agent' | 'customer'
   }>
   selectedContactUserId?: string | null
   tagOptions: { id: string; name: string; slug: string }[]
@@ -427,7 +428,7 @@ export default function TabGeneral({
     })
     setSidebarBaseline(s)
     setSidebarDraft(s)
-  }, [ticketData?.id, ticketData?.priority, ticketData?.short_note, sidebarBaselineTick])
+  }, [ticketData?.id, ticketData?.priority, ticketData?.short_note, ticketData?.company_id, sidebarBaselineTick])
 
   const sidebarDirty = useMemo(
     () => !sidebarDraftEquals(sidebarDraft, sidebarBaseline),
@@ -447,6 +448,7 @@ export default function TabGeneral({
   const [companyHasActiveTracker, setCompanyHasActiveTracker] = useState(false)
   const [companyActiveTrackerUser, setCompanyActiveTrackerUser] = useState<string | null>(null)
   const [companyActiveTrackerStart, setCompanyActiveTrackerStart] = useState<string | null>(null)
+  const [companyActiveTrackers, setCompanyActiveTrackers] = useState<{ user_name: string | null; start_time: string; ticket_id?: number | null; ticket_title?: string | null }[]>([])
 
   useEffect(() => {
     const cid = ticketData?.company_id
@@ -471,6 +473,7 @@ export default function TabGeneral({
           setCompanyHasActiveTracker(j[0].has_active_tracker ?? false)
           setCompanyActiveTrackerUser(j[0].active_tracker_user_name ?? null)
           setCompanyActiveTrackerStart(j[0].active_tracker_start_time ?? null)
+          setCompanyActiveTrackers(j[0].active_trackers ?? [])
         }
       })
       .catch(() => {})
@@ -1068,7 +1071,10 @@ export default function TabGeneral({
                   allowClear placeholder="Same as Created By"
                   loading={sidebarAttributesSaving}
                   onChange={(v) => setSidebarDraft((d) => ({ ...d, contactUserId: (v as string | undefined) ?? null }))}
-                  options={contactUserOptions.map((u) => ({ value: u.id, label: u.full_name ? `${u.full_name} (${u.email})` : u.email }))}
+                  options={contactUserOptions.map((u) => ({
+                    value: u.id,
+                    label: `${u.full_name ? `${u.full_name} (${u.email})` : u.email}${u._type === 'customer' ? ' [Customer]' : ''}`,
+                  }))}
                   style={{ width: '100%' }} showSearch optionFilterProp="label"
                 />
                 {contactCrossCompanyHint ? <Alert type="warning" showIcon message={contactCrossCompanyHint} style={{ marginTop: 8 }} /> : null}
@@ -1297,6 +1303,7 @@ export default function TabGeneral({
                       hasActiveTracker={companyHasActiveTracker}
                       activeTrackerUserName={companyActiveTrackerUser}
                       activeTrackerStartTime={companyActiveTrackerStart}
+                      activeTrackers={companyActiveTrackers}
                     />
                   )}
 

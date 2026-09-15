@@ -38,6 +38,7 @@ import {
   getEffectiveCompanyIdForUser,
 } from '@/lib/ticket-contact-user'
 import { sendAgentClosesTicketEmail, sendTicketAssignedEmail } from '@/lib/ticket-notification-emails'
+import { isClosedLikeTicketStatus } from '@/lib/ticket-status-workflow'
 import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-access'
 
 async function triggerTicketUpdatedAutomation(ticketId: number) {
@@ -148,6 +149,10 @@ export async function PATCH(
       updatedAt: new Date(),
     }
     if (closingSupportQueue) {
+      setPayload.priority = null
+    }
+    // Clear priority when moving to closed-like or pending status
+    if (isClosedLikeTicketStatus(nextStatus) || nextStatus === 'pending') {
       setPayload.priority = null
     }
 
@@ -471,6 +476,7 @@ export async function PATCH(
   if (company_id !== undefined) {
     companyIdUpdate = company_id || null
   }
+  let clearContactDueToCompanyChange = false
 
   let ticketCrossCompanyWarning: string | undefined
 
@@ -492,10 +498,16 @@ export async function PATCH(
     if (nextContact) {
       const contactEffectiveCompany = await getEffectiveCompanyIdForUser(nextContact)
       if (contactEffectiveCompany && contactEffectiveCompany !== mergedCompanyId) {
-        companyIdUpdate = contactEffectiveCompany
-        if (curRow?.companyId && curRow.companyId !== contactEffectiveCompany) {
-          ticketCrossCompanyWarning =
-            'Contact is from another company: ticket company was already aligned to the contact\'s company.'
+        if (company_id !== undefined) {
+          // User explicitly changed company — contact belongs to a different company, so clear the contact.
+          clearContactDueToCompanyChange = true
+        } else {
+          // No explicit company change — auto-align company to the contact's company.
+          companyIdUpdate = contactEffectiveCompany
+          if (curRow?.companyId && curRow.companyId !== contactEffectiveCompany) {
+            ticketCrossCompanyWarning =
+              'Contact is from another company: ticket company was already aligned to the contact\'s company.'
+          }
         }
       }
     }
@@ -588,10 +600,12 @@ export async function PATCH(
     ...(due_date !== undefined && { dueDate: due_date ? new Date(due_date) : null }),
     ...(ticketTypeUpdate !== undefined && { ticketType: ticketTypeUpdate }),
     ...(ticketTypeUpdate === 'trash' && { priority: null }),
-    ...(contact_user_id !== undefined && {
-      contactUserId:
-        contact_user_id === null || contact_user_id === '' ? null : String(contact_user_id),
-    }),
+    ...(clearContactDueToCompanyChange
+      ? { contactUserId: null }
+      : contact_user_id !== undefined && {
+          contactUserId:
+            contact_user_id === null || contact_user_id === '' ? null : String(contact_user_id),
+        }),
   }
 
   if (needsReorderTxn) {
@@ -850,6 +864,9 @@ export async function PATCH(
   }
   if (companyIdUpdate !== undefined) {
     resBody.company_id = companyIdUpdate
+  }
+  if (clearContactDueToCompanyChange) {
+    resBody.contact_user_id = null
   }
   return NextResponse.json(resBody)
 }
