@@ -30,13 +30,33 @@ const themeInitScript = `
 //   subsets: ["latin"],
 // });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://app.efectiveseo.com'
+
 export async function generateMetadata(): Promise<Metadata> {
   const settings = await getAppSettings()
-  const appName = settings.app_name || process.env.NEXT_PUBLIC_APP_NAME || 'DeskTeam360'
+  const appName = settings.app_name || process.env.NEXT_PUBLIC_APP_NAME || 'EfectiveSEO'
+  const description =
+    process.env.NEXT_PUBLIC_APP_DESCRIPTION ||
+    `${appName} ticket portal — manage support tickets, teams, and customer work in one place.`
   return {
+    metadataBase: new URL(SITE_URL),
     title: { default: appName, template: `%s | ${appName}` },
-    description: process.env.NEXT_PUBLIC_APP_DESCRIPTION,
+    description,
     icons: settings.app_favicon_url ? [{ url: settings.app_favicon_url }] : undefined,
+    openGraph: {
+      title: appName,
+      description,
+      url: SITE_URL,
+      siteName: appName,
+      images: [{ url: '/og-image.png', width: 1200, height: 630, alt: appName }],
+      type: 'website',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: appName,
+      description,
+      images: ['/og-image.png'],
+    },
   }
 }
 

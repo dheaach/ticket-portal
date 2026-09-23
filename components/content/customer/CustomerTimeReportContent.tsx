@@ -27,8 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bar,
   BarChart,
-  CartesianGrid,
-  Cell,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -58,9 +57,6 @@ const { Content } = Layout
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
 
-/** Bar colors aligned with RoundRobin horizontal bar / MUI-style palette */
-const CHART_BAR_COLORS = ['#9155FD', '#01C4C4', '#56CA00', '#FFB400', '#FF4C51', '#16B1FF']
-
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
@@ -70,11 +66,6 @@ function formatDuration(seconds: number): string {
 
 function hoursFromSeconds(seconds: number): number {
   return Math.round((seconds / 3600) * 100) / 100
-}
-
-function truncateLabel(s: string, max = 42): string {
-  if (!s) return `Ticket`
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`
 }
 
 function presetsSortedNewestFirst(presets: CustomerTimeReportPresetDTO[]): CustomerTimeReportPresetDTO[] {
@@ -896,23 +887,6 @@ export default function CustomerTimeReportContent({ user: currentUser }: Custome
 
   const multiCompany = (report?.companies?.length ?? 0) > 1
 
-  const chartRows = useMemo(() => {
-    if (!report?.tickets?.length) return []
-    return [...report.tickets]
-      .sort((a, b) => b.reported_seconds - a.reported_seconds)
-      .slice(0, 12)
-      .map((t) => {
-        const base = t.title || `Ticket #${t.id}`
-        const prefix = multiCompany && t.company_name ? `${t.company_name} · ` : ''
-        return {
-          key: String(t.id),
-          label: truncateLabel('#'+t.id+' '+ base, 42),
-          hours: hoursFromSeconds(t.reported_seconds),
-          fullTitle: prefix + base,
-        }
-      })
-  }, [report, multiCompany])
-
   const tableData = useMemo(() => {
     if (!report?.tickets) return []
     return [...report.tickets].sort((a, b) => b.reported_seconds - a.reported_seconds)
@@ -922,6 +896,29 @@ export default function CustomerTimeReportContent({ user: currentUser }: Custome
     const rows = report?.company_summary
     if (!rows?.length) return []
     return [...rows]
+  }, [report?.company_summary])
+
+  const avgCustomerTimeRows = useMemo(() => {
+    if (!report?.company_summary?.length) return []
+    return report.company_summary.map((r) => {
+      const planSeconds = r.plan_active_time_hours * 3600
+      const usedPct =
+        planSeconds > 0
+          ? Math.round((r.total_tracker_reported_seconds / planSeconds) * 10000) / 100
+          : 0
+      // Cap bar display at 100 so bars don't overflow; label still shows real value
+      const usedPctDisplay = Math.min(usedPct, 100)
+      const remainPct = Math.max(0, Math.round((100 - usedPctDisplay) * 100) / 100)
+      return {
+        key: r.company_id,
+        name: r.company_name ?? r.company_id.slice(0, 8),
+        usedPct,
+        usedPctDisplay,
+        remainPct,
+        usedHours: hoursFromSeconds(r.total_tracker_reported_seconds),
+        planHours: r.plan_active_time_hours,
+      }
+    })
   }, [report?.company_summary])
 
   const companySummaryColumns: ColumnsType<CompanySummaryRow> = useMemo(
@@ -1540,44 +1537,50 @@ export default function CustomerTimeReportContent({ user: currentUser }: Custome
                   />
                 </div>
 
-                {chartRows.length > 0 ? (
+
+                {avgCustomerTimeRows.length > 0 ? (
                   <>
                     <div className="customer-time-report-section-title">
-                      <Text strong>Reported time by ticket (top 12)</Text>
+                      <Text strong>Average Customer Time</Text>
                     </div>
-                    <div className="customer-time-report-chart-wrap">
-                      <ResponsiveContainer width="100%" height={Math.max(280, chartRows.length * 36 + 80)}>
+                    <div style={{ marginBottom: 24 }}>
+                      <ResponsiveContainer width="100%" height={Math.max(200, avgCustomerTimeRows.length * 48 + 60)}>
                         <BarChart
                           layout="vertical"
-                          data={chartRows}
+                          data={avgCustomerTimeRows}
                           margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
-                          barCategoryGap={8}
+                          barCategoryGap={12}
                         >
-                          <CartesianGrid strokeDasharray="5 5" className="customer-time-report-chart-grid" />
                           <XAxis
                             type="number"
-                            tickFormatter={(v) => `${v}h`}
-                            fontSize={12}
+                            domain={[0, 100]}
+                            tickFormatter={(v) => `${v}%`}
+                            fontSize={11}
                             tick={{ fill: 'var(--foreground, rgba(0,0,0,0.65))' }}
                           />
                           <YAxis
                             type="category"
-                            dataKey="label"
-                            width={multiCompany ? 200 : 168}
+                            dataKey="name"
+                            width={150}
                             tick={{ fontSize: 11, fill: 'var(--foreground, rgba(0,0,0,0.65))' }}
                           />
                           <Tooltip
-                            formatter={(value: number | undefined) => [`${value}h`, 'Reported']}
-                            labelFormatter={(_, payload) =>
-                              (payload?.[0]?.payload as { fullTitle?: string })?.fullTitle ?? ''
-                            }
+                            formatter={(value: number, name: string, props: { payload?: { usedPct?: number; usedHours?: number; planHours?: number } }) => {
+                              if (name === 'Used Hours (%)') {
+                                const realPct = props.payload?.usedPct ?? value
+                                const label = realPct >= 100 ? `Overtime ${realPct}%` : `${realPct}%`
+                                return [`${label} (${props.payload?.usedHours ?? 0}h / ${props.payload?.planHours ?? 0}h plan)`, 'Used']
+                              }
+                              return [`${value}%`, 'Remaining']
+                            }}
                             contentStyle={{ borderRadius: 8, color: '#141414' }}
                           />
-                          <Bar dataKey="hours" name="Hours" radius={[0, 6, 6, 0]} maxBarSize={28}>
-                            {chartRows.map((_, i) => (
-                              <Cell key={chartRows[i].key} fill={CHART_BAR_COLORS[i % CHART_BAR_COLORS.length]} />
-                            ))}
-                          </Bar>
+                          <Legend
+                            wrapperStyle={{ fontSize: 12 }}
+                            formatter={(value) => <span style={{ color: 'var(--foreground, rgba(0,0,0,0.65))' }}>{value}</span>}
+                          />
+                          <Bar dataKey="usedPctDisplay" name="Used Hours (%)" stackId="a" fill="#9155FD" maxBarSize={32} label={{ content: (props: { x?: number; y?: number; width?: number; height?: number; value?: number; usedPct?: number }) => { const { x = 0, y = 0, width = 0, height = 0, usedPct = 0 } = props; if (usedPct <= 5) return <g />; const txt = usedPct >= 100 ? 'Overtime' : `${usedPct}%`; return <text x={x + width - 4} y={y + height / 2} textAnchor="end" dominantBaseline="middle" fontSize={11} fill="#fff">{txt}</text> } }} />
+                          <Bar dataKey="remainPct" name="Remain Hours (%)" stackId="a" fill="#b0b0b0" maxBarSize={32} label={{ position: 'insideRight', fontSize: 11, fill: '#fff', formatter: (v: number) => v > 5 ? `${v}%` : '' }} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>

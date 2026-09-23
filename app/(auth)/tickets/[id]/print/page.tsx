@@ -28,6 +28,7 @@ export default async function TicketPrintPage({ params }: { params: Promise<{ id
   if (Number.isNaN(ticketId)) redirect('/tickets?ticket_error=invalid')
 
   const role = (session.user as { role?: string }).role?.toLowerCase()
+  const isCustomer = role === 'customer'
   const userId = session.user.id!
 
   const [ticketExists] = await db.select({ id: tickets.id, teamId: tickets.teamId }).from(tickets).where(eq(tickets.id, ticketId)).limit(1)
@@ -61,5 +62,5 @@ export default async function TicketPrintPage({ params }: { params: Promise<{ id
   })
   if (!data) redirect('/tickets?ticket_error=no_access')
 
-  return <TicketPrintView ticketData={data.ticketData} comments={data.comments} />
+  return <TicketPrintView ticketData={data.ticketData} comments={data.comments} isAgent={!isCustomer} />
 }

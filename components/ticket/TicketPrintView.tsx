@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 
 interface Comment {
   id: string
@@ -15,6 +15,14 @@ interface TicketPrintViewProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ticketData: Record<string, any>
   comments: Comment[]
+  isAgent?: boolean
+}
+
+function htmlToText(html: string): string {
+  if (typeof document === 'undefined') return html
+  const el = document.createElement('div')
+  el.innerHTML = html
+  return el.innerText ?? el.textContent ?? ''
 }
 
 function formatDate(dateStr: string) {
@@ -29,7 +37,7 @@ function formatDate(dateStr: string) {
   })
 }
 
-export default function TicketPrintView({ ticketData: t, comments }: TicketPrintViewProps) {
+export default function TicketPrintView({ ticketData: t, comments, isAgent }: TicketPrintViewProps) {
   useEffect(() => {
     window.print()
   }, [])
@@ -38,6 +46,54 @@ export default function TicketPrintView({ ticketData: t, comments }: TicketPrint
   const company = t?.company?.name || '—'
   const team = t?.team?.name || '—'
   const agent = t?.assignees?.[0]?.user?.full_name || t?.assignees?.[0]?.user?.email || '—'
+
+  const downloadMd = useCallback(() => {
+    const lines: string[] = []
+    lines.push(`# [#${t?.id}] ${t?.title ?? ''}`)
+    lines.push('')
+    lines.push('## Details')
+    lines.push(`| Field | Value |`)
+    lines.push(`|-------|-------|`)
+    lines.push(`| Status | ${t?.status ?? '—'} |`)
+    lines.push(`| Priority | ${t?.priority ?? '—'} |`)
+    lines.push(`| Source | ${t?.source ?? '—'} |`)
+    lines.push(`| Type | ${t?.ticket_type ?? '—'} |`)
+    lines.push(`| Company | ${company} |`)
+    lines.push(`| Team | ${team} |`)
+    lines.push(`| Agent | ${agent} |`)
+    lines.push(`| Created by | ${createdBy} |`)
+    lines.push(`| Created at | ${t?.created_at ? formatDate(t.created_at) : '—'} |`)
+    if (t?.due_date) lines.push(`| Due date | ${formatDate(t.due_date)} |`)
+    lines.push('')
+    if (t?.description) {
+      lines.push('## Description')
+      lines.push('')
+      lines.push(htmlToText(t.description))
+      lines.push('')
+    }
+    if (comments.length > 0) {
+      lines.push(`## Comments (${comments.length})`)
+      lines.push('')
+      for (const c of comments) {
+        const author = c.user?.full_name || c.user?.email || 'Unknown'
+        const badge = c.visibility === 'note' ? ' `Note`' : c.visibility === 'reply' ? ' `Reply`' : ''
+        lines.push(`### ${author}${badge} — ${formatDate(c.created_at)}`)
+        lines.push('')
+        lines.push(htmlToText(c.comment))
+        lines.push('')
+      }
+    }
+    lines.push('---')
+    lines.push(`*DeskTeam360 — Ticket #${t?.id} — Exported ${new Date().toLocaleString()}*`)
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `ticket-${t?.id}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [t, comments, createdBy, company, team, agent])
 
   return (
     <>
@@ -52,8 +108,8 @@ export default function TicketPrintView({ ticketData: t, comments }: TicketPrint
         .meta-item label { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #666; display: block; margin-bottom: 2px; }
         .meta-item span { font-size: 13px; }
         .section-title { font-size: 13px; font-weight: bold; text-transform: uppercase; color: #333; margin: 20px 0 8px; letter-spacing: 0.5px; }
-        .description-box { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin-bottom: 24px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-        .comment-block { border: 1px solid #ddd; border-radius: 4px; margin-bottom: 14px; overflow: hidden; page-break-inside: avoid; }
+        .description-box { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin-bottom: 24px; line-height: 1.6; word-break: break-word; }
+        .comment-block { border: 1px solid #ddd; border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
         .comment-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: #f5f5f5; border-bottom: 1px solid #ddd; }
         .comment-header.note { background: #fffbe6; border-bottom-color: #ffe58f; }
         .comment-header.reply { background: #e6f4ff; border-bottom-color: #91caff; }
@@ -62,7 +118,10 @@ export default function TicketPrintView({ ticketData: t, comments }: TicketPrint
         .comment-header .badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: bold; text-transform: uppercase; }
         .badge-note { background: #faad14; color: #fff; }
         .badge-reply { background: #1677ff; color: #fff; }
-        .comment-body { padding: 12px 14px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+        .comment-body { padding: 12px 14px; line-height: 1.6; word-break: break-word; }
+        .description-box ul, .description-box ol, .comment-body ul, .comment-body ol { padding-left: 20px; margin: 8px 0; }
+        .description-box li, .comment-body li { margin-bottom: 6px; }
+        .description-box p, .comment-body p { margin: 0 0 8px; }
         .print-footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ccc; font-size: 11px; color: #999; display: flex; justify-content: space-between; }
         @media print {
           @page { margin: 16mm 12mm; }
@@ -72,6 +131,17 @@ export default function TicketPrintView({ ticketData: t, comments }: TicketPrint
       `}</style>
 
       <div className="print-wrap">
+        {isAgent && (
+          <div className="no-print" style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={downloadMd}
+              style={{ padding: '6px 16px', fontSize: 13, cursor: 'pointer', borderRadius: 4, border: '1px solid #d9d9d9', background: '#fff', fontFamily: 'Arial, sans-serif' }}
+            >
+              ⬇ Download as MD
+            </button>
+          </div>
+        )}
+        {/* Header */}
         <div className="print-header">
           <div>
             <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>DeskTeam360</div>
