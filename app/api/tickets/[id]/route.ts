@@ -39,6 +39,7 @@ import {
 } from '@/lib/ticket-contact-user'
 import { sendAgentClosesTicketEmail, sendTicketAssignedEmail } from '@/lib/ticket-notification-emails'
 import { isClosedLikeTicketStatus } from '@/lib/ticket-status-workflow'
+import { isClosedLikeTicketStatus } from '@/lib/ticket-status-workflow'
 import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-access'
 
 async function triggerTicketUpdatedAutomation(ticketId: number) {

@@ -333,6 +333,10 @@ export const ticketComments = pgTable('ticket_comments', {
   createdAt: ts('created_at').notNull().defaultNow(),
   /** Wall-clock time when the row was actually inserted into the DB. Never back-dated (unlike createdAt for email imports). Used for unread-dot logic. */
   receivedAt: ts('received_at').notNull().defaultNow(),
+  /** Last editor (agent who edited the comment, may differ from original author). */
+  editedByUserId: uuid('edited_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  /** When the comment was last edited. */
+  editedAt: ts('edited_at'),
 })
 
 /** One saved AI summary per anchor (per comment, description, or ticket header). */

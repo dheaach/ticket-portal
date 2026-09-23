@@ -14,7 +14,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   if (Number.isNaN(ticketId)) return {}
   const [row] = await db.select({ title: tickets.title }).from(tickets).where(eq(tickets.id, ticketId)).limit(1)
   if (!row) return {}
-  return { title: `Print #${ticketId} ${row.title}` }
+  const now = new Date()
+  const ts = now.toLocaleString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '-').replace(',', '')
+  return { title: { absolute: `Print #${ticketId} ${row.title} - DeskTeam360 - ${ts}` } }
 }
 
 export default async function TicketPrintPage({ params }: { params: Promise<{ id: string }> }) {
