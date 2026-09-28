@@ -1,16 +1,47 @@
 'use client'
 
-import { ClockCircleOutlined, DeleteOutlined, EditOutlined, FlagOutlined, MoreOutlined, RobotOutlined, SyncOutlined } from '@ant-design/icons'
-import { Button, Dropdown, Flex, Modal, Tag, Typography } from 'antd'
+import { ClockCircleOutlined, DeleteOutlined, EditOutlined, FieldTimeOutlined, FlagOutlined, MoreOutlined, RobotOutlined, SyncOutlined } from '@ant-design/icons'
+import { Button, Dropdown, Flex, Modal, Tag, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useRouter } from 'next/navigation'
 
+import type { TicketTrackerStat } from '@/app/api/tickets/ticket-time-stats/route'
 import { KANBAN_SEMANTIC_BLUE, KANBAN_SEMANTIC_GREEN, kanbanTagStyle } from '@/lib/kanban-tag-chip-style'
 
 import type { StatusColumn, TicketRecord } from './types'
 import { DEFAULT_ALL_STATUS_COLUMNS } from './types'
 
 const { Text } = Typography
+
+function fmtHours(s: number): string {
+  return (s / 3600).toFixed(1) + 'h'
+}
+
+function fmtSeconds(s: number): string {
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h === 0 && m === 0) return '< 1m'
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}
+
+function TrackerTooltipContent({ stat }: { stat: TicketTrackerStat | undefined }) {
+  return (
+    <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+      <div>⏱ Today: <strong>{stat && stat.today_seconds > 0 ? fmtSeconds(stat.today_seconds) : '—'}</strong></div>
+      <div style={{ color: '#aaa' }}>⏱ Yesterday: {stat && stat.yesterday_seconds > 0 ? fmtSeconds(stat.yesterday_seconds) : '—'}</div>
+      {stat && stat.active_trackers.length > 0 ? (
+        <div style={{ marginTop: 4 }}>
+          🟢 Active now:
+          {stat.active_trackers.map((a, idx) => (
+            <div key={idx} style={{ paddingLeft: 8 }}>• {a.user_name}</div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ color: '#aaa', marginTop: 2 }}>No active tracker</div>
+      )}
+    </div>
+  )
+}
 
 interface CardViewCardProps {
   ticket: TicketRecord
@@ -23,6 +54,7 @@ interface CardViewCardProps {
   onFilterByStatus?: (statusSlug: string) => void
   onFilterByTag?: (tagId: string) => void
   onFilterByCompany?: (companyId: string) => void
+  trackerStat?: TicketTrackerStat
 }
 
 export default function CardViewCard({
@@ -35,6 +67,7 @@ export default function CardViewCard({
   onFilterByStatus,
   onFilterByTag,
   onFilterByCompany,
+  trackerStat,
 }: CardViewCardProps) {
   const router = useRouter()
   const statusCols = allStatusColumns?.length ? allStatusColumns : DEFAULT_ALL_STATUS_COLUMNS
@@ -87,7 +120,7 @@ export default function CardViewCard({
             <RobotOutlined title="Created by automation" style={{ fontSize: 12, color: '#722ed1', marginLeft: 6, verticalAlign: 'middle' }} />
           )}
         </Text>
-        <Text style={{ fontSize: 13, color: '#16324A', display: 'block' }}>
+        <Text style={{ fontSize: 13, color: '#1890ff', display: 'block' }}>
           by {ticket.by_label ?? ticket.creator_name ?? 'Unassigned'}
         </Text>
         {!isCustomer && ticket.short_note && (
@@ -95,7 +128,7 @@ export default function CardViewCard({
             {ticket.short_note}
           </Text>
         )}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginTop: 4 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginTop: 4, width: '100%' }}>
           {ticket.due_date && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--kanban-card-muted)' }}>
               <FlagOutlined style={{ fontSize: 12 }} />
@@ -106,6 +139,17 @@ export default function CardViewCard({
             <ClockCircleOutlined style={{ fontSize: 12 }} />
             Last update {dayjs(ticket.updated_at).format('MMM DD, YYYY')}
           </span>
+          <Tooltip title={<TrackerTooltipContent stat={trackerStat} />} placement="top" mouseEnterDelay={0.2}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--kanban-card-muted)', cursor: 'default', userSelect: 'none' }}>
+              <FieldTimeOutlined style={{ fontSize: 12 }} />
+              {trackerStat && (trackerStat.today_seconds > 0 || trackerStat.yesterday_seconds > 0)
+                ? fmtHours(trackerStat.today_seconds)
+                : '0.0h'}
+              {trackerStat && trackerStat.active_trackers.length > 0 && (
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#52c41a', display: 'inline-block' }} />
+              )}
+            </span>
+          </Tooltip>
         </div>
         {Number(ticket.checklist_total) > 0 && (
           <span style={{ marginTop: 4, fontSize: 12, color: 'var(--kanban-card-muted)' }}>
@@ -117,19 +161,6 @@ export default function CardViewCard({
       <Flex justify="flex-end" gap={6} align="center" wrap="wrap" style={{ flexShrink: 0 }}>
         {ticket.priority != null && ticket.priority > 0 && (
           <Tag style={kanbanTagStyle({ neutral: true })}>P{ticket.priority}</Tag>
-        )}
-        {ticket.visibility !== 'team' && (
-          <Tag
-            style={kanbanTagStyle({
-              ...(ticket.visibility === 'public' ? { fillHex: KANBAN_SEMANTIC_GREEN } : { neutral: true }),
-            })}
-          >
-            {ticket.visibility === 'specific_users' || ticket.visibility === 'private'
-              ? 'Private'
-              : ticket.visibility === 'public'
-                ? 'Public'
-                : (ticket.visibility as string).toUpperCase()}
-          </Tag>
         )}
         {ticket.team_name && (
           <Tag style={kanbanTagStyle({ fillHex: KANBAN_SEMANTIC_BLUE })}>{ticket.team_name}</Tag>

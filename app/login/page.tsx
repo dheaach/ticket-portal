@@ -64,8 +64,8 @@ export default function LoginPage() {
 
       if (result?.ok) {
         message.success('Login successful!')
-        // Full page navigation so the session cookie is sent (important for Vercel/serverless)
-        window.location.href = '/dashboard'
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+        window.location.href = isMobile ? '/m/tickets' : '/dashboard'
         return
       }
     } catch {
@@ -103,7 +103,7 @@ export default function LoginPage() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'linear-gradient(135deg, #64BCE9 0%, #16324A 100%)',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
           padding: '20px',
         }}
       >

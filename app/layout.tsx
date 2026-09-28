@@ -38,24 +38,26 @@ export async function generateMetadata(): Promise<Metadata> {
   const description =
     process.env.NEXT_PUBLIC_APP_DESCRIPTION ||
     `${appName} ticket portal — manage support tickets, teams, and customer work in one place.`
+  const logoUrl = settings.app_logo_url || settings.app_favicon_url || '/logo.jpg'
   return {
     metadataBase: new URL(SITE_URL),
     title: { default: appName, template: `%s | ${appName}` },
     description,
+    manifest: '/manifest.json',
     icons: settings.app_favicon_url ? [{ url: settings.app_favicon_url }] : undefined,
     openGraph: {
       title: appName,
       description,
       url: SITE_URL,
       siteName: appName,
-      images: [{ url: '/og-image.png', width: 1200, height: 630, alt: appName }],
+      images: [{ url: logoUrl, alt: appName }],
       type: 'website',
     },
     twitter: {
-      card: 'summary_large_image',
+      card: 'summary',
       title: appName,
       description,
-      images: ['/og-image.png'],
+      images: [logoUrl],
     },
   }
 }

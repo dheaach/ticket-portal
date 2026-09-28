@@ -22,6 +22,7 @@ type StatusRow = {
   customer_title?: string
   description?: string
   color: string
+  is_active?: boolean
 }
 
 type KnowledgeArticleRow = {
@@ -47,7 +48,7 @@ const FAQ_CATEGORY_COLORS: Record<string, string> = {
 
 function faqCategoryColor(category?: string): string {
   const slug = (category ?? 'general').trim().toLowerCase() || 'general'
-  return FAQ_CATEGORY_COLORS[slug] ?? '#16324A'
+  return FAQ_CATEGORY_COLORS[slug] ?? '#1890ff'
 }
 
 function glossaryStripeColor(color: string): string {
@@ -55,7 +56,7 @@ function glossaryStripeColor(color: string): string {
     ? color.startsWith('#')
       ? color
       : `#${color}`
-    : '#16324A'
+    : '#1890ff'
 }
 
 function GlossaryBodyContent({
@@ -308,7 +309,7 @@ export default function TicketReferenceContent({ user: currentUser }: TicketRefe
               <Switch size="small" checked={viewAsClient} onChange={setViewAsClient} />
             </div>
           )}
-          {statuses.map((row) => (
+          {statuses.filter((row) => row.is_active !== false).map((row) => (
             <GlossaryBlock
               key={row.id}
               title={statusTitle(row)}
