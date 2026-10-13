@@ -1,15 +1,14 @@
-import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, type SQL,sql } from 'drizzle-orm'
+import { and, type AnyColumn, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, type SQL, sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
 import { isAdmin } from '@/lib/auth-utils'
 import { loadAutomationTicketContext, runAutomationRules } from '@/lib/automation-engine'
-import { getCustomerCompanyId } from '@/lib/customer-company'
+import { getCustomerCompanyIds } from '@/lib/customer-company'
 import { customerTicketsAccessCondition } from '@/lib/customer-ticket-access'
 import { db } from '@/lib/db'
 import {
   companies,
-  companyUsers,
   projects,
   projectStatuses,
   tags,
@@ -37,6 +36,7 @@ import {
 } from '@/lib/ticket-company-priority-order'
 import {
   assertTicketContactUserAllowed,
+  getContactCompanyIds,
   getEffectiveCompanyIdForUser,
 } from '@/lib/ticket-contact-user'
 import { sendNewTicketAgentNotificationEmail } from '@/lib/ticket-notification-emails'
@@ -58,9 +58,9 @@ export async function GET(request: Request) {
   const isCustomerViewer = role === 'customer'
 
   // Customer: company tickets + personal tickets without company (owner)
-  let customerCompanyId: string | null = null
+  let customerCompanyIds: string[] = []
   if (isCustomerViewer) {
-    customerCompanyId = await getCustomerCompanyId(userId)
+    customerCompanyIds = await getCustomerCompanyIds(userId)
   }
 
   const url = new URL(request.url)
@@ -93,7 +93,7 @@ export async function GET(request: Request) {
     : null
   const paginated = url.searchParams.get('paginated') === '1'
   const sortOrder = url.searchParams.get('sort_order') === 'asc' ? 'asc' : 'desc'
-  const sortById = url.searchParams.get('sort_by') === 'id'
+  const sortByParam = url.searchParams.get('sort_by')?.trim() || ''
   const limit = Math.min(
     Math.max(1, parseInt(url.searchParams.get('limit') || String(DEFAULT_LIMIT), 10)),
     MAX_LIMIT
@@ -134,7 +134,8 @@ export async function GET(request: Request) {
 
   const conditions: SQL[] = []
   if (isCustomerList) {
-    conditions.push(await customerTicketsAccessCondition(userId, customerCompanyId))
+    conditions.push(await customerTicketsAccessCondition(userId, customerCompanyIds))
+    if (companyIds.length > 0) conditions.push(inArray(tickets.companyId, companyIds))
   } else if (isAdminList) {
     if (companyIds.length > 0) conditions.push(inArray(tickets.companyId, companyIds))
   } else {
@@ -226,6 +227,43 @@ export async function GET(request: Request) {
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
+  const idOrder = sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)
+  // Empty values always sort last, whichever direction is chosen.
+  const nullsLast = (expr: SQL | AnyColumn) =>
+    sortOrder === 'asc' ? sql`${expr} ASC NULLS LAST` : sql`${expr} DESC NULLS LAST`
+  const ticketOrder: SQL[] = (() => {
+    switch (sortByParam) {
+      case 'id':
+        return [idOrder]
+      case 'created_at':
+        return [nullsLast(tickets.createdAt), idOrder]
+      case 'updated_at':
+        return [nullsLast(tickets.updatedAt), idOrder]
+      case 'due_date':
+        return [nullsLast(tickets.dueDate), idOrder]
+      case 'title':
+        return [nullsLast(sql`lower(${tickets.title})`), idOrder]
+      case 'status':
+        return [nullsLast(tickets.status), idOrder]
+      case 'company':
+        return [nullsLast(sql`lower(${companies.name})`), idOrder]
+      case 'team':
+        return [nullsLast(sql`lower(${teams.name})`), idOrder]
+      case 'type':
+        return [nullsLast(sql`lower(${ticketTypes.title})`), idOrder]
+      case 'priority':
+        // Unranked (null / 0) tickets stay at the end in both directions.
+        return [
+          sql`CASE WHEN ${tickets.priority} IS NULL OR ${tickets.priority} <= 0 THEN 1 ELSE 0 END`,
+          nullsLast(tickets.priority),
+          asc(tickets.companyId),
+          idOrder,
+        ]
+      default:
+        return [asc(tickets.priority), asc(tickets.companyId), idOrder]
+    }
+  })()
+
   const baseQuery = db
     .select({
       ticket: tickets,
@@ -243,15 +281,11 @@ export async function GET(request: Request) {
   const ticketsRows = whereClause
     ? await baseQuery
         .where(whereClause)
-        .orderBy(...(sortById
-          ? [sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]
-          : [asc(tickets.companyId), asc(tickets.priority), sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]))
+        .orderBy(...ticketOrder)
         .limit(limit)
         .offset(offset)
     : await baseQuery
-        .orderBy(...(sortById
-          ? [sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]
-          : [asc(tickets.companyId), asc(tickets.priority), sortOrder === 'asc' ? asc(tickets.id) : desc(tickets.id)]))
+        .orderBy(...ticketOrder)
         .limit(limit)
         .offset(offset)
 
@@ -491,14 +525,12 @@ export async function POST(request: Request) {
       ? Math.max(0, Math.floor(numericPriorityRaw))
       : 0
   let resolvedCompanyId = company_id || null
-  if (role === 'customer' && !resolvedCompanyId) {
-    const [userRow] = await db.select({ companyId: users.companyId }).from(users).where(eq(users.id, userId)).limit(1)
-    let cid = userRow?.companyId ?? null
-    if (!cid) {
-      const [cu] = await db.select({ companyId: companyUsers.companyId }).from(companyUsers).where(eq(companyUsers.userId, userId)).limit(1)
-      cid = cu?.companyId ?? null
+  if (role === 'customer') {
+    const allowedCompanyIds = await getCustomerCompanyIds(userId)
+    if (resolvedCompanyId && !allowedCompanyIds.includes(resolvedCompanyId)) {
+      return NextResponse.json({ error: 'You cannot create tickets for this company' }, { status: 403 })
     }
-    resolvedCompanyId = cid
+    resolvedCompanyId = resolvedCompanyId ?? allowedCompanyIds[0] ?? null
   }
 
   let contactUserId: string | null = null
@@ -516,7 +548,12 @@ export async function POST(request: Request) {
   const companyIdBeforeContactAlign = resolvedCompanyId
   let ticketCrossCompanyWarning: string | undefined
   if (contactUserId) {
-    const contactCompany = await getEffectiveCompanyIdForUser(contactUserId)
+    const contactCompanyIds = await getContactCompanyIds(contactUserId)
+    // A contact may belong to several companies; only realign when the chosen company isn't one of them.
+    const contactCompany =
+      resolvedCompanyId && contactCompanyIds.includes(resolvedCompanyId)
+        ? resolvedCompanyId
+        : await getEffectiveCompanyIdForUser(contactUserId)
     if (contactCompany && contactCompany !== resolvedCompanyId) {
       if (companyIdBeforeContactAlign && companyIdBeforeContactAlign !== contactCompany) {
         ticketCrossCompanyWarning =

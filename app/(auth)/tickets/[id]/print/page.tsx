@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { auth } from '@/auth'
 import TicketPrintView from '@/components/ticket/TicketPrintView'
 import { isAdmin } from '@/lib/auth-utils'
-import { getCustomerCompanyId } from '@/lib/customer-company'
+import { getCustomerCompanyIds } from '@/lib/customer-company'
 import { db, teamMembers, teams, tickets } from '@/lib/db'
 import { getTicketDetail } from '@/lib/ticket-detail'
 
@@ -56,8 +56,8 @@ export default async function TicketPrintPage({ params }: { params: Promise<{ id
 
   const data = await getTicketDetail(ticketId, {
     screenshotUserId: userId,
-    ...(role === 'customer'
-      ? { customerPortal: { userId, companyId: await getCustomerCompanyId(userId) } }
+    ...(isCustomer
+      ? { customerPortal: { userId, companyIds: await getCustomerCompanyIds(userId) } }
       : {}),
   })
   if (!data) redirect('/tickets?ticket_error=no_access')

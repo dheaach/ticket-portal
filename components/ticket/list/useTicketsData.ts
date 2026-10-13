@@ -27,7 +27,7 @@ import {
 } from '@/lib/tickets-list-query'
 import { deleteFile, uploadTicketFileDraft } from '@/utils/storage'
 
-import type { Team, TicketRecord, UserRecord } from './types'
+import type { Team, TicketRecord, TicketSortField, TicketSortOrder, UserRecord } from './types'
 import type { NewTicketAttachment } from './types'
 import type { TicketStatusRecord } from './types'
 import {
@@ -43,6 +43,29 @@ export type TicketsDragStartHandler = (event: DragStartEvent) => void
 export type TicketsDragEndHandler = (event: DragEndEvent) => Promise<void>
 
 const FILTER_STORAGE_KEY = 'deskteam-tickets-filter'
+const LIST_PAGE_SIZE_KEY = 'tickets_list_page_size'
+const LIST_SORT_KEY = 'tickets_list_sort'
+const DEFAULT_LIST_PAGE_SIZE = 15
+const LIST_PAGE_SIZES = [10, 15, 20, 50]
+const SORT_FIELDS: TicketSortField[] = ['id', 'title', 'priority', 'due_date', 'updated_at', 'created_at', 'company', 'status', 'type', 'team']
+
+function readStoredListPageSize(): number {
+  try {
+    const n = Number(sessionStorage.getItem(LIST_PAGE_SIZE_KEY))
+    if (LIST_PAGE_SIZES.includes(n)) return n
+  } catch { /* ignore */ }
+  return DEFAULT_LIST_PAGE_SIZE
+}
+
+function readStoredListSort(): { sortBy: TicketSortField; sortOrder: TicketSortOrder } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LIST_SORT_KEY) || 'null') as { sortBy?: string; sortOrder?: string } | null
+    if (raw && SORT_FIELDS.includes(raw.sortBy as TicketSortField) && (raw.sortOrder === 'asc' || raw.sortOrder === 'desc')) {
+      return { sortBy: raw.sortBy as TicketSortField, sortOrder: raw.sortOrder }
+    }
+  } catch { /* ignore */ }
+  return { sortBy: TICKETS_LIST_SORT_BY, sortOrder: TICKETS_LIST_SORT_ORDER }
+}
 
 interface StoredFilter {
   filterStatus?: string[] | null
@@ -291,10 +314,21 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
 
   const [searchFields, setSearchFields] = useState<string>('title,description')
 
-  const commitSearch = (val: string) => {
+  // Input text and the query keyword are separate (search runs on Enter), so resets from URL/presets must update both.
+  const applySearch = useCallback((val: string) => {
+    setFilterSearch(val)
     setCommittedSearch(val)
-    if (!val.trim()) setFilterSearch('')
+  }, [])
+
+  const commitSearch = (val: string) => {
+    if (!val.trim()) applySearch('')
+    else setCommittedSearch(val)
   }
+
+  // Clearing the input (✕ or backspace) drops the active search right away.
+  useEffect(() => {
+    if (!filterSearch.trim() && committedSearch) setCommittedSearch('')
+  }, [filterSearch, committedSearch])
 
   const columnsToShow = useMemo(() => {
     if (allStatusColumns.length === 0) return []
@@ -347,13 +381,27 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     setFilterTeamIds([])
     setFilterDateRange(null)
     setFilterDueDateRange(null)
-    setFilterSearch('')
-  }, [statusColumns, isCustomer, allStatuses])
+    applySearch('')
+  }, [statusColumns, isCustomer, allStatuses, applySearch])
 
   const queryClient = useQueryClient()
 
-  // list/card have built-in pagination so fetch all; kanban/RR show cards at once → use user limit
-  const effectiveTicketsLimit = (viewMode === 'list' || viewMode === 'card') ? 9999 : ticketsPageLimit
+  // List/Card page and sort on the server; Kanban/Round Robin load `ticketsPageLimit` cards at once.
+  const isPagedView = viewMode === 'list' || viewMode === 'card'
+  const [listPage, setListPage] = useState(1)
+  const [listPageSize, setListPageSize] = useState<number>(DEFAULT_LIST_PAGE_SIZE)
+  const [listSort, setListSort] = useState<{ sortBy: TicketSortField; sortOrder: TicketSortOrder }>({
+    sortBy: TICKETS_LIST_SORT_BY,
+    sortOrder: TICKETS_LIST_SORT_ORDER,
+  })
+  // Stored preferences are applied after mount so SSR and the first client render match.
+  useLayoutEffect(() => {
+    setListPageSize(readStoredListPageSize())
+    setListSort(readStoredListSort())
+  }, [])
+  const [listTotals, setListTotals] = useState<Record<string, number>>({})
+  const pageKey = isPagedView ? `${listPage}:${listPageSize}:${listSort.sortBy}:${listSort.sortOrder}` : ''
+  const effectiveTicketsLimit = ticketsPageLimit
 
   const ticketsListQueryKey = useMemo(
     () =>
@@ -371,6 +419,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         filterTicketType,
         lookupReady,
         searchFields,
+        pageKey,
       }),
     [
       isCustomer,
@@ -386,8 +435,29 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       filterTicketType,
       lookupReady,
       searchFields,
+      pageKey,
     ]
   )
+
+  // Any filter, search or sort change starts List/Card from page 1.
+  const listResetKey = JSON.stringify([ticketsListQueryKey[2], listPageSize, listSort]).replace(/"pageKey":"[^"]*"/, '')
+  const prevListResetKeyRef = useRef(listResetKey)
+  useEffect(() => {
+    if (prevListResetKeyRef.current === listResetKey) return
+    prevListResetKeyRef.current = listResetKey
+    setListPage(1)
+  }, [listResetKey])
+
+  const setListPagination = useCallback((page: number, pageSize: number) => {
+    setListPageSize(pageSize)
+    setListPage(page)
+    try { sessionStorage.setItem(LIST_PAGE_SIZE_KEY, String(pageSize)) } catch { /* ignore */ }
+  }, [])
+
+  const changeListSort = useCallback((sortBy: TicketSortField, sortOrder: TicketSortOrder) => {
+    setListSort({ sortBy, sortOrder })
+    try { localStorage.setItem(LIST_SORT_KEY, JSON.stringify({ sortBy, sortOrder })) } catch { /* ignore */ }
+  }, [])
 
   const ticketsListQueryKeyRef = useRef(ticketsListQueryKey)
   ticketsListQueryKeyRef.current = ticketsListQueryKey
@@ -400,7 +470,10 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       const inJunkFolder =
         !isCustomer && (filterTicketType === 'spam' || filterTicketType === 'trash')
       if (inJunkFolder) params.set('ticket_type', filterTicketType!)
-      if (!isCustomer) {
+      if (isCustomer) {
+        const customerCompanyIds = filterCompanyIds.filter((id) => id !== '__none__')
+        if (customerCompanyIds.length > 0) params.set('company_ids', customerCompanyIds.join(','))
+      } else {
         const noCompany = filterCompanyIds.includes('__none__')
         const realCompanyIds = filterCompanyIds.filter((id) => id !== '__none__')
         if (noCompany) params.set('no_company', '1')
@@ -438,6 +511,23 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         params.set('search', debouncedSearch.trim())
         params.set('search_fields', searchFields || 'title,description')
       }
+      if (isPagedView) {
+        params.set('paginated', '1')
+        params.set('limit', String(listPageSize))
+        params.set('offset', String((listPage - 1) * listPageSize))
+        params.set('sort_by', listSort.sortBy)
+        params.set('sort_order', listSort.sortOrder)
+        const totalKey = JSON.stringify(ticketsListQueryKey)
+        try {
+          const res = await apiFetch<{ data: TicketRecord[]; total: number }>(`/api/tickets?${params}`, { signal })
+          setListTotals((prev) => ({ ...prev, [totalKey]: res.total ?? 0 }))
+          return Array.isArray(res.data) ? res.data : []
+        } catch (error: unknown) {
+          if (isRequestAborted(error, signal)) throw error
+          message.error((error as Error).message || 'Failed to fetch tickets')
+          throw error
+        }
+      }
       params.set('limit', String(effectiveTicketsLimit))
 
       const qs = params.toString()
@@ -456,6 +546,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
 
   const tickets = ticketsQuery.data ?? []
   const loading = ticketsQuery.isFetching
+  const listTotal = listTotals[JSON.stringify(ticketsListQueryKey)] ?? tickets.length
 
   /** Server returns filtered data - no client-side filtering */
   const filteredTickets = tickets
@@ -484,11 +575,10 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     setFilterTeamIds(state.filterTeamIds)
     setFilterDateRange(state.filterDateRange)
     setFilterDueDateRange(state.filterDueDateRange ?? null)
-    setFilterSearch(state.filterSearch)
+    applySearch(state.filterSearch)
     setFilterSidebarCollapsed(state.filterSidebarCollapsed)
     setViewMode(vm)
     setTicketsPageLimitState(normalizeTicketsPageLimit(stored.ticketsPageLimit))
-    setCommittedSearch(state.filterSearch)
     try {
       const savedPrefs = localStorage.getItem('ticket-search-prefs')
       if (savedPrefs) {
@@ -497,7 +587,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         if (fields) setSearchFields(fields)
       }
     } catch { /* ignore */ }
-  }, [isCustomer])
+  }, [isCustomer, applySearch])
 
   const fetchLookup = async () => {
     try {
@@ -679,7 +769,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setFilterTeamIds(parsed.filterTeamIds)
         setFilterDateRange(parsed.filterDateRange)
         setFilterDueDateRange(parsed.filterDueDateRange ?? null)
-        setFilterSearch(parsed.filterSearch)
+        applySearch(parsed.filterSearch)
         setViewMode(parsed.viewMode)
         setFilterSidebarCollapsed(parsed.filterSidebarCollapsed)
         setFilterTicketType(parsed.filterTicketType ?? null)
@@ -692,7 +782,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setFilterTeamIds(parsed.filterTeamIds)
         setFilterDateRange(parsed.filterDateRange)
         setFilterDueDateRange(parsed.filterDueDateRange ?? null)
-        setFilterSearch(parsed.filterSearch)
+        applySearch(parsed.filterSearch)
         // Only apply viewMode if explicitly present in URL — preset=1 is always added by the save
         // effect even without a view param, so absent view means "keep current / localStorage value".
         if (searchParams.has(URL_PARAMS.view)) setViewMode(parsed.viewMode)
@@ -710,7 +800,8 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         if (searchParams.has(URL_PARAMS.due_date_from) && searchParams.has(URL_PARAMS.due_date_to)) {
           setFilterDueDateRange(parsed.filterDueDateRange ?? null)
         }
-        if (searchParams.has(URL_PARAMS.search)) setFilterSearch(parsed.filterSearch)
+        // Search is always mirrored into the URL, so a missing param means "no search" (e.g. navbar cleared).
+        applySearch(parsed.filterSearch)
         if (searchParams.has(URL_PARAMS.view)) setViewMode(parsed.viewMode)
         if (searchParams.has(URL_PARAMS.sidebar)) setFilterSidebarCollapsed(parsed.filterSidebarCollapsed)
         if (searchParams.has(URL_PARAMS.ticket_type)) setFilterTicketType(parsed.filterTicketType ?? null)
@@ -732,6 +823,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       }
       if (searchParams.has(URL_PARAMS.view)) setViewMode(parsed.viewMode)
       if (searchParams.has(URL_PARAMS.sidebar)) setFilterSidebarCollapsed(parsed.filterSidebarCollapsed)
+      applySearch(parsed.filterSearch)
     } else {
       const sidebarOnly = parseSidebarCollapsedFromUrl(searchParams)
       if (sidebarOnly !== null) {
@@ -752,7 +844,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         setFilterTeamIds([])
         setFilterDateRange(null)
         setFilterDueDateRange(null)
-        setFilterSearch('')
+        applySearch('')
         setViewMode('kanban')
         setFilterSidebarCollapsed(true)
         setFilterTicketType(null)
@@ -760,6 +852,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     }
   }, [
     pathname,
+    applySearch,
     searchParamsKey,
     searchParams,
     isCustomer,
@@ -784,7 +877,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         filterDueDateRange?.[0] && filterDueDateRange?.[1]
           ? [filterDueDateRange[0].toISOString(), filterDueDateRange[1].toISOString()]
           : null,
-      filterSearch: filterSearch || null,
+      filterSearch: committedSearch || null,
       viewMode: viewMode,
       filterSidebarCollapsed: filterSidebarCollapsed,
       ticketsPageLimit,
@@ -805,7 +898,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         filterTeamIds,
         filterDateRange,
         filterDueDateRange,
-        filterSearch,
+        filterSearch: committedSearch,
         viewMode,
         filterTicketType: isCustomer ? null : filterTicketType,
       })
@@ -825,7 +918,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     filterTeamIds,
     filterDateRange,
     filterDueDateRange,
-    filterSearch,
+    committedSearch,
     viewMode,
     filterSidebarCollapsed,
     filterTicketType,
@@ -842,7 +935,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       filterTeamIds,
       filterDateRange,
       filterDueDateRange,
-      filterSearch,
+      filterSearch: committedSearch,
       viewMode,
       filterTicketType: isCustomer ? null : filterTicketType,
     })
@@ -854,7 +947,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     filterTeamIds,
     filterDateRange,
     filterDueDateRange,
-    filterSearch,
+    committedSearch,
     viewMode,
     filterTicketType,
     isCustomer,
@@ -1005,7 +1098,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     setAttachmentUploading(true)
     try {
       const companyId = isCustomer
-        ? userCompanyId ?? undefined
+        ? (form.getFieldValue('company_id') as string | undefined) || userCompanyId || undefined
         : (form.getFieldValue('company_id') as string | undefined)
       const companyName = companyId ? companies.find((c) => c.id === companyId)?.name : undefined
       for (let i = 0; i < arr.length; i++) {
@@ -1091,7 +1184,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       if (isCustomer && !editingTicket) {
         effectiveValues.status = newTicketDefaultStatus
         effectiveValues.visibility = 'public'
-        effectiveValues.company_id = userCompanyId ?? null
+        effectiveValues.company_id = values.company_id || userCompanyId || null
       }
 
       const teamIdNormalized =
@@ -1121,7 +1214,6 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         if (customerEditing) {
           const attachBody: Record<string, unknown> = {
             title: values.title,
-            description: values.description ?? null,
             type_id: values.type_id ?? null,
             priority: priorityFromFormValue(values.priority),
           }
@@ -1342,8 +1434,11 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     setFilterSidebarCollapsed,
     viewMode,
     setViewMode,
-    sortBy: TICKETS_LIST_SORT_BY,
-    sortOrder: TICKETS_LIST_SORT_ORDER,
+    sortBy: listSort.sortBy,
+    sortOrder: listSort.sortOrder,
+    isPagedView,
+    listPagination: { page: listPage, pageSize: listPageSize, total: listTotal, onChange: setListPagination },
+    listSortControl: { sortBy: listSort.sortBy, sortOrder: listSort.sortOrder, onChange: changeListSort },
     hasActiveFilters,
     clearFilters,
     handleCreate,

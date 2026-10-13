@@ -82,6 +82,7 @@ interface UserRecord {
   status: string
   company_id: string | null
   company?: { id: string; name: string } | null
+  extra_company_ids?: string[]
   avatar_url: string | null
   created_at: string
   last_login_at: string | null
@@ -123,6 +124,11 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
     description: string
   } | null>(null)
   const selectedRole = Form.useWatch('role', form)
+  const selectedCompanyId = Form.useWatch('company_id', form) as string | undefined
+  const watchedEmail = Form.useWatch('email', form) as string | undefined
+  const emailChanged =
+    !!editingUser && isAdmin && !!watchedEmail &&
+    watchedEmail.trim().toLowerCase() !== (editingUser.email ?? '').toLowerCase()
 
   const bulkDeletableCount = useMemo(
     () => selectedRowKeys.filter((k) => String(k) !== currentUser.id).length,
@@ -213,6 +219,7 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
       role: record.role,
       status: record.status,
       company_id: record.company_id || undefined,
+      extra_company_ids: record.extra_company_ids ?? [],
       phone: record.phone || '',
       department: record.department || '',
       position: record.position || '',
@@ -378,6 +385,7 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
           Object.assign(patchBody, {
             role: values.role,
             company_id: values.company_id || null,
+            ...(values.role === 'customer' ? { extra_company_ids: values.extra_company_ids ?? [] } : {}),
             department: values.department || null,
             position: values.position || null,
             bio: values.bio || null,
@@ -385,6 +393,9 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
         }
         if (isAdmin && values.newPassword?.trim()) {
           patchBody.password = values.newPassword
+        }
+        if (isAdmin && values.email && values.email.trim().toLowerCase() !== (editingUser.email ?? '').toLowerCase()) {
+          patchBody.email = values.email.trim()
         }
         await apiFetch(`/api/users/${editingUser.id}`, {
           method: 'PATCH',
@@ -491,6 +502,26 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
         return
       }
       await runUserModalSave(values, { sendActivationEmail: false })
+      return
+    }
+    if (emailChanged && !values.__emailConfirmed) {
+      Modal.confirm({
+        title: 'Change this user’s email?',
+        content: (
+          <div>
+            <p style={{ marginBottom: 8 }}>
+              <b>{editingUser.email}</b> → <b>{values.email.trim()}</b>
+            </p>
+            <p style={{ marginBottom: 0 }}>
+              The user will have to sign in with the new email, and incoming emails from the old address will no
+              longer be matched to this user.
+            </p>
+          </div>
+        ),
+        okText: 'Change email',
+        okButtonProps: { danger: true },
+        onOk: () => handleSubmit({ ...values, __emailConfirmed: true }),
+      })
       return
     }
     if (!isCustomer && values.role === 'customer') {
@@ -1005,9 +1036,18 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                     <Input
                       prefix={<UserOutlined />}
                       placeholder="Email"
-                      disabled={!!editingUser}
+                      disabled={!!editingUser && !isAdmin}
                     />
                   </Form.Item>
+                  {emailChanged && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: -12, marginBottom: 16 }}
+                      message="Changing the email affects sign-in"
+                      description={`The user must sign in with the new email. Incoming emails from ${editingUser?.email} will no longer be matched to this user.`}
+                    />
+                  )}
                 </Col>
               </Row>
 
@@ -1098,6 +1138,24 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                         showSearch
                         optionFilterProp="label"
                         options={companies.map((c) => ({ label: c.name, value: c.id }))}
+                      />
+                    </Form.Item>
+                  )}
+                  {selectedRole === 'customer' && editingUser && (
+                    <Form.Item
+                      name="extra_company_ids"
+                      label="Additional companies"
+                      extra="This customer will also see all tickets of these companies in My Tickets."
+                    >
+                      <Select
+                        mode="multiple"
+                        placeholder="None"
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        options={companies
+                          .filter((c) => c.id !== selectedCompanyId)
+                          .map((c) => ({ label: c.name, value: c.id }))}
                       />
                     </Form.Item>
                   )}

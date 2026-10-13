@@ -5,7 +5,6 @@ import {
   ClockCircleOutlined,
   CloudUploadOutlined,
   FileTextOutlined,
-  FolderOutlined,
   StopOutlined,
   TeamOutlined,
   UserOutlined,
@@ -15,10 +14,12 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { UserTimeSummary } from '@/app/api/users/time-summary/route'
 import DashboardAnnouncementsSection from '@/components/dashboard/DashboardAnnouncementsSection'
 import DashboardHourlyActivityCard from '@/components/dashboard/DashboardHourlyActivityCard'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
+import StopTimerNoteModal from '@/components/ticket/StopTimerNoteModal'
 import type { StoppedTimeSession } from '@/lib/dashboard-hourly-activity'
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -58,7 +59,7 @@ function formatTime(seconds: number) {
   return `${secs}s`
 }
 
-export default function DashboardContent({ user, stats }: DashboardContentProps) {
+export default function DashboardContent({ user }: DashboardContentProps) {
   const { message } = App.useApp()
   const [collapsed, setCollapsed] = useState(false)
   type ActiveTrackerRow = {
@@ -125,62 +126,54 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
 
   const fetchAllSessionsForStats = async () => {
     try {
-      // From 2 calendar months ago so rolling "30d" stats + previous calendar month stay covered
-      const fetchFrom = dayjs().subtract(2, 'month').startOf('month').toISOString()
-      const data = await apiFetch<StoppedTimeSession[]>(
-        `/api/users/time-tracker?user_id=${user.id}&filter=custom&start=${encodeURIComponent(fetchFrom)}&end=${encodeURIComponent(dayjs().toISOString())}&stopped_only=1&limit=500`
-      )
-      setAllSessionsForStats(Array.isArray(data) ? data : [])
+      // Charts only: last 7 days and the hourly card (up to 30 days back). Card totals come from time-summary.
+      const fetchFrom = dayjs().subtract(30, 'day').startOf('day').toISOString()
+      const fetchTo = dayjs().toISOString()
+      const pageSize = 500
+      const all: StoppedTimeSession[] = []
+      // Busy agents log more than one page in two months; page until the API runs out.
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const page = await apiFetch<StoppedTimeSession[]>(
+          `/api/users/time-tracker?user_id=${user.id}&filter=custom&start=${encodeURIComponent(fetchFrom)}&end=${encodeURIComponent(fetchTo)}&stopped_only=1&limit=${pageSize}&offset=${offset}`
+        )
+        if (!Array.isArray(page)) break
+        all.push(...page)
+        if (page.length < pageSize) break
+      }
+      setAllSessionsForStats(all)
     } catch {
       setAllSessionsForStats([])
     }
   }
 
-  const trackerStats = useMemo(() => {
-    const now = dayjs()
-    const todayStart = now.startOf('day')
-    const weekStart = now.subtract(7, 'day').startOf('day')
-    const monthStart = now.subtract(30, 'day').startOf('day')
+  const [timeSummary, setTimeSummary] = useState<{ data: UserTimeSummary; fetchedAt: number } | null>(null)
 
-    let todaySeconds = 0
-    let weekSeconds = 0
-    let monthSeconds = 0
-    const todayTickets = new Set<number>()
-    const weekTickets = new Set<number>()
-    const monthTickets = new Set<number>()
-    const lastMonthTickets = new Set<number>()
-    const lastMonthRef = now.subtract(1, 'month')
-
-    allSessionsForStats.forEach((s) => {
-      const start = dayjs(s.start_time)
-      const dur = s.duration_seconds ?? 0
-      if (start.isAfter(todayStart)) {
-        todaySeconds += dur
-        todayTickets.add(s.ticket_id)
-      }
-      if (start.isAfter(weekStart)) {
-        weekSeconds += dur
-        weekTickets.add(s.ticket_id)
-      }
-      if (start.isAfter(monthStart)) {
-        monthSeconds += dur
-        monthTickets.add(s.ticket_id)
-      }
-      if (start.isSame(lastMonthRef, 'month')) {
-        lastMonthTickets.add(s.ticket_id)
-      }
-    })
-
-    return {
-      todaySeconds,
-      weekSeconds,
-      monthSeconds,
-      todayTickets: todayTickets.size,
-      weekTickets: weekTickets.size,
-      monthTickets: monthTickets.size,
-      lastMonthTickets: lastMonthTickets.size,
+  const fetchTimeSummary = useCallback(async () => {
+    try {
+      // Period boundaries are cut on the server in the user's profile timezone.
+      const data = await apiFetch<UserTimeSummary>('/api/users/time-summary')
+      setTimeSummary({ data, fetchedAt: Date.now() })
+    } catch {
+      setTimeSummary(null)
     }
-  }, [allSessionsForStats])
+  }, [])
+
+  // Server totals plus live growth of running timers since the fetch (elapsedBySessionId ticks every second).
+  const trackerStats = useMemo(() => {
+    const p = timeSummary?.data.periods
+    const live = timeSummary ? timeSummary.data.running_count * Math.max(0, Math.floor((Date.now() - timeSummary.fetchedAt) / 1000)) : 0
+    return {
+      todaySeconds: (p?.today.seconds ?? 0) + live,
+      weekSeconds: (p?.week.seconds ?? 0) + live,
+      monthSeconds: (p?.month.seconds ?? 0) + live,
+      lastMonthSeconds: p?.last_month.seconds ?? 0,
+      todayTickets: p?.today.tickets ?? 0,
+      weekTickets: p?.week.tickets ?? 0,
+      monthTickets: p?.month.tickets ?? 0,
+      lastMonthTickets: p?.last_month.tickets ?? 0,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeSummary, elapsedBySessionId])
 
   const chartData = useMemo(() => {
     const days: { day: string; short: string; duration: number; fullMark: number }[] = []
@@ -207,11 +200,12 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
   const loadTrackerDashboardData = useCallback(async () => {
     setLoadingTrackers(true)
     try {
-      const [lastData, , activeData] = await Promise.all([
+      const [lastData, , , activeData] = await Promise.all([
         apiFetch<Array<{ id: string; ticket_id: number; start_time: string; stop_time: string | null; duration_seconds: number | null; ticket?: { id: number; title: string } }>>(
           `/api/users/time-tracker?user_id=${user.id}&filter=all&limit=${RECENT_TRACKERS_LIMIT}`
         ),
         fetchAllSessionsForStats(),
+        fetchTimeSummary(),
         apiFetch<ActiveTrackerRow[]>(`/api/users/time-tracker?user_id=${user.id}&active_only=1`),
       ])
       setLastTrackers(Array.isArray(lastData) ? lastData : [])
@@ -223,7 +217,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
     } finally {
       setLoadingTrackers(false)
     }
-  }, [user.id])
+  }, [user.id, fetchTimeSummary])
 
   useEffect(() => {
     void loadTrackerDashboardData()
@@ -246,14 +240,20 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
     return () => clearInterval(interval)
   }, [activeTrackers])
 
-  const handleStopTracker = async (row: ActiveTrackerRow) => {
+  const [stopNoteRow, setStopNoteRow] = useState<ActiveTrackerRow | null>(null)
+  const handleStopTracker = (row: ActiveTrackerRow) => setStopNoteRow(row)
+
+  const confirmStopTracker = async (note: string) => {
+    const row = stopNoteRow
+    if (!row) return
     setStoppingId(row.id)
     try {
       await apiFetch(`/api/tickets/${row.ticket_id}/time-tracker`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'stop', session_id: row.id }),
+        body: JSON.stringify({ action: 'stop', session_id: row.id, note }),
       })
+      setStopNoteRow(null)
       setActiveTrackers((prev) => prev.filter((t) => t.id !== row.id))
       message.success('Time tracker stopped')
       void loadTrackerDashboardData()
@@ -262,6 +262,7 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
         error instanceof Error ? error.message : 'Failed to stop tracker'
       message.error(errMsg)
       console.error('Stop tracker error:', error)
+      throw error
     } finally {
       setStoppingId(null)
     }
@@ -297,7 +298,10 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
                 prefix={<ClockCircleOutlined />}
                 styles={{ content: { color: '#16324A', fontSize: 18 } }}
               />
-              <Text type="secondary" style={{ fontSize: 12 }}>Tickets: {trackerStats.todayTickets}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Tickets: {trackerStats.todayTickets}
+                {timeSummary ? ` · ${timeSummary.data.timezone}` : ''}
+              </Text>
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -325,11 +329,14 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
           <Col xs={24} sm={12} lg={6}>
             <Card>
               <Statistic
-                title="Total Teams"
-                value={stats.totalTeams}
-                prefix={<FolderOutlined />}
-                styles={{ content: { color: '#fa8c16' } }}
+                title="Last month"
+                value={formatTime(trackerStats.lastMonthSeconds)}
+                prefix={<ClockCircleOutlined />}
+                styles={{ content: { color: '#fa8c16', fontSize: 18 } }}
               />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {dayjs().subtract(1, 'month').format('MMMM YYYY')} · Tickets: {trackerStats.lastMonthTickets}
+              </Text>
             </Card>
           </Col>
         </Row>
@@ -531,6 +538,12 @@ export default function DashboardContent({ user, stats }: DashboardContentProps)
         </Row>
         </Content>
       </AdminMainColumn>
+      <StopTimerNoteModal
+        open={!!stopNoteRow}
+        context={stopNoteRow ? `#${stopNoteRow.ticket_id} ${stopNoteRow.ticket?.title ?? ''}`.trim() : null}
+        onCancel={() => setStopNoteRow(null)}
+        onSubmit={confirmStopTracker}
+      />
     </Layout>
   )
 }

@@ -1,11 +1,12 @@
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
-import { and,eq } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import { google } from 'googleapis'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
 import { formatFromHeader, getAppSettings } from '@/lib/app-settings'
+import { getExtraCompanies } from '@/lib/customer-company'
 import { companies, companyUsers, db, emailIntegrations, messageTemplates, users } from '@/lib/db'
 import { mergeMessageTemplateHtml, userRowToMergeMap } from '@/lib/message-template-merge'
 import {
@@ -307,6 +308,7 @@ export async function GET(
     status: u.status,
     company_id: u.companyId,
     company: row.company ? { id: row.company.id, name: row.company.name } : null,
+    extra_companies: await getExtraCompanies(u.id, u.companyId),
     avatar_url: u.avatarUrl,
     created_at: u.createdAt ? new Date(u.createdAt).toISOString() : '',
     updated_at: u.updatedAt ? new Date(u.updatedAt).toISOString() : '',
@@ -394,6 +396,26 @@ export async function PATCH(
   }
 
   const updateData: Record<string, unknown> = {}
+  if (body.email !== undefined) {
+    const newEmail = String(body.email ?? '').trim().toLowerCase()
+    if (newEmail !== (targetUser.email ?? '').toLowerCase()) {
+      if (!isAdmin) {
+        return NextResponse.json({ error: 'Only admins can change a user email' }, { status: 403 })
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        return NextResponse.json({ error: 'Invalid email address' }, { status: 400 })
+      }
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(sql`lower(${users.email}) = ${newEmail}`, ne(users.id, id)))
+        .limit(1)
+      if (taken) {
+        return NextResponse.json({ error: 'This email is already used by another user' }, { status: 409 })
+      }
+      updateData.email = newEmail
+    }
+  }
   if (body.full_name !== undefined) updateData.fullName = body.full_name
   if (body.first_name !== undefined) updateData.firstName = body.first_name || null
   if (body.last_name !== undefined) updateData.lastName = body.last_name || null
@@ -429,10 +451,43 @@ export async function PATCH(
     await db.delete(companyUsers).where(eq(companyUsers.userId, id))
   }
 
+  let extraCompaniesChanged = false
+  if (Array.isArray(body.extra_company_ids)) {
+    if (!isAdmin && role !== 'manager') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    const primaryId = (updateData.companyId as string | null | undefined) ?? targetUser.companyId ?? null
+    const wanted = [...new Set((body.extra_company_ids as unknown[]).map(String).filter(Boolean))].filter(
+      (cid) => cid !== primaryId
+    )
+    const current = await db
+      .select({ companyId: companyUsers.companyId })
+      .from(companyUsers)
+      .where(and(eq(companyUsers.userId, id), eq(companyUsers.ticketAccess, true)))
+    const revoke = current.map((r) => r.companyId).filter((cid) => !wanted.includes(cid))
+    if (revoke.length > 0) {
+      await db
+        .update(companyUsers)
+        .set({ ticketAccess: false, updatedAt: new Date() })
+        .where(and(eq(companyUsers.userId, id), inArray(companyUsers.companyId, revoke)))
+    }
+    for (const cid of wanted) {
+      await db
+        .insert(companyUsers)
+        .values({ companyId: cid, userId: id, ticketAccess: true })
+        .onConflictDoUpdate({
+          target: [companyUsers.companyId, companyUsers.userId],
+          set: { ticketAccess: true, updatedAt: new Date() },
+        })
+    }
+    extraCompaniesChanged = revoke.length > 0 || wanted.some((cid) => !current.some((r) => r.companyId === cid))
+  }
+
   const [afterRow] = await db.select().from(users).where(eq(users.id, id)).limit(1)
   if (afterRow) {
     const extra: Record<string, unknown> = {}
     if (passwordChanged) extra.password_changed = true
+    if (extraCompaniesChanged) extra.extra_company_ids = body.extra_company_ids
     await logUserUpdated({
       actorUserId: session.user.id ?? null,
       actorRole: actorRoleFromSession(session),

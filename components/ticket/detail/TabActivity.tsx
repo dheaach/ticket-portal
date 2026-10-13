@@ -9,8 +9,8 @@ import relativeTime from 'dayjs/plugin/relativeTime'
 import { useEffect, useState } from 'react'
 
 import TicketActivityActorAvatar from '@/components/ticket/TicketActivityActorAvatar'
+import TicketActivityDetails from '@/components/ticket/TicketActivityDetails'
 import { formatTicketActivityAction } from '@/lib/ticket-activity-labels'
-import { summarizeTicketActivityMetadata } from '@/lib/ticket-activity-metadata'
 
 dayjs.extend(relativeTime)
 dayjs.extend(localizedFormat)
@@ -37,7 +37,7 @@ export default function TabActivity({
   refreshKey = 0,
 }: {
   ticketId: number
-  /** Bump after ticket edits so new rows (e.g. status → ticket_updated) appear without reload. */
+  /** Bump after ticket edits so new rows (e.g. status ΓåÆ ticket_updated) appear without reload. */
   refreshKey?: number
 }) {
   const [loading, setLoading] = useState(true)
@@ -110,7 +110,7 @@ export default function TabActivity({
                   </Space>
                 )
               }
-              return <Text type="secondary">—</Text>
+              return <Text type="secondary">ΓÇö</Text>
             }
             return (
               <Space size="small" align="center">
@@ -138,7 +138,7 @@ export default function TabActivity({
           dataIndex: 'created_at',
           width: 140,
           render: (iso: string) => (
-            <span title={iso ? dayjs(iso).format('LLL') : ''}>{iso ? dayjs(iso).fromNow() : '—'}</span>
+            <span title={iso ? dayjs(iso).format('LLL') : ''}>{iso ? dayjs(iso).fromNow() : 'ΓÇö'}</span>
           ),
         },
         {
@@ -150,12 +150,8 @@ export default function TabActivity({
         {
           title: 'Details',
           key: 'details',
-          ellipsis: true,
-          render: (_, r) => (
-            <Text type="secondary" style={{ fontSize: 13 }}>
-              {summarizeTicketActivityMetadata(r.action, r.metadata) || '—'}
-            </Text>
-          ),
+          width: 420,
+          render: (_, r) => <TicketActivityDetails action={r.action} metadata={r.metadata} />,
         },
       ]}
     />
