@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:file": "node scripts/run-migration.mjs",
+    "db:check-schema": "npx tsx scripts/check-db-schema.ts",
     "db:fix-job-types": "npx tsx scripts/fix-job-types-permissions.ts",
     "db:push": "node scripts/drizzle-db-push-first.cjs",
     "db:push:both": "node scripts/drizzle-db-push-both.cjs",
