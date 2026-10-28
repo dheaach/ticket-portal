@@ -8,6 +8,7 @@ import { customerOwnsCompany, isCompanyPortalAdmin, userBelongsToCompany } from 
 import { companies, companyUsers, db, teams, users } from '@/lib/db'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 import { upsertCompanyUserMembership } from '@/lib/upsert-company-user-membership'
+import { logUserCompanyChange } from '@/lib/user-company'
 
 function normalizeUuidBody(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null
@@ -63,6 +64,12 @@ export async function PUT(
   const activeManagerId =
     body.active_manager_id !== undefined ? normalizeUuidBody(body.active_manager_id) : undefined
   const activeTime = body.active_time !== undefined ? parseActiveTime(body.active_time) : undefined
+  const displayOrder =
+    body.display_order !== undefined
+      ? body.display_order === null || body.display_order === ''
+        ? null
+        : Math.max(0, Math.min(100000, Math.floor(Number(body.display_order) || 0)))
+      : undefined
   const isCustomerCompany = body.is_customer !== undefined ? body.is_customer === true : undefined
   const role = (session.user as { role?: string }).role?.toLowerCase()
   const isCustomer = role === 'customer'
@@ -113,6 +120,7 @@ export async function PUT(
       updateData.activeManagerId = activeManagerId
     }
     if (activeTime !== undefined) updateData.activeTime = activeTime
+    if (displayOrder !== undefined) updateData.displayOrder = displayOrder
     if (isCustomerCompany !== undefined) updateData.isCustomer = isCustomerCompany
   }
 
@@ -153,10 +161,12 @@ export async function PUT(
       .update(companyUsers)
       .set({ companyRole: 'member', updatedAt: new Date() })
       .where(and(eq(companyUsers.companyId, id), ne(companyUsers.userId, leader_user_id)))
+    const [prevLeader] = await db.select({ companyId: users.companyId }).from(users).where(eq(users.id, leader_user_id)).limit(1)
     await db
       .update(users)
       .set({ companyId: id, updatedAt: new Date() })
       .where(eq(users.id, leader_user_id))
+    await logUserCompanyChange({ userId: leader_user_id, from: prevLeader?.companyId ?? null, to: id, source: 'company_leader', actorUserId: session.user.id })
     await upsertCompanyUserMembership({
       companyId: id,
       userId: leader_user_id,
@@ -182,6 +192,7 @@ export async function PUT(
       active_team_id: row.activeTeamId ?? null,
       active_manager_id: row.activeManagerId ?? null,
       active_time: row.activeTime ?? 0,
+      display_order: row.displayOrder ?? null,
       is_customer: row.isCustomer ?? false,
       created_at: row.createdAt ? new Date(row.createdAt).toISOString() : '',
       updated_at: row.updatedAt ? new Date(row.updatedAt).toISOString() : '',
@@ -201,7 +212,7 @@ export async function DELETE(
   }
 
   const role = (session.user as { role?: string }).role?.toLowerCase()
-  if (role === 'customer' || !canEditCompanies(role)) {
+  if (role === 'customer') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

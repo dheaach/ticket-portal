@@ -1,12 +1,14 @@
 'use client'
 
-import { ArrowLeftOutlined, BankOutlined, CalendarOutlined, ClockCircleOutlined, CloseOutlined, EditOutlined, GlobalOutlined, HistoryOutlined, IdcardOutlined, LockOutlined, MailOutlined, NumberOutlined,PhoneOutlined, SaveOutlined, TranslationOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, BankOutlined, CalendarOutlined, ClockCircleOutlined, CloseOutlined, EditOutlined, GlobalOutlined, HistoryOutlined, IdcardOutlined, LockOutlined, MailOutlined, NumberOutlined,PhoneOutlined, SaveOutlined, ToolOutlined, TranslationOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
 import { Avatar, Button, Card, Col, DatePicker, Descriptions, Divider, Drawer, Flex,Form, Input, Layout, message, Modal, Radio, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo,useRef, useState } from 'react'
 
+import UserSkillsField from '@/components/skills/UserSkillsField'
+import UserCompanyHistory from '@/components/user/UserCompanyHistory'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
 import {
   getUserDepartmentAccentColor,
@@ -67,7 +69,20 @@ export default function UserDetailContent({ user: currentUser, userData: initial
   const [userData, setUserData] = useState(initialUserData)
   const extraCompanies: { id: string; name: string }[] = userData.extra_companies ?? []
   const isOwnProfile = String(currentUser.id) === String(userData?.id)
+  const [shiftOptions, setShiftOptions] = useState<{ id: string; title: string; start: string; end: string; crosses_midnight: boolean }[]>([])
+  useEffect(() => {
+    fetch('/api/shifts', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setShiftOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setShiftOptions([]))
+  }, [])
   const isCustomer = ((userData?.role ?? '').toLowerCase() === 'customer')
+  const [createdTickets, setCreatedTickets] = useState<{
+    rows: { id: number; title: string; status: string; ticket_type: string; created_at: string | null; company_name: string | null }[]
+    total: number
+    loading: boolean
+  }>({ rows: [], total: 0, loading: false })
+  const [createdPage, setCreatedPage] = useState({ current: 1, pageSize: 20 })
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(userData.avatar_url)
@@ -92,6 +107,23 @@ export default function UserDetailContent({ user: currentUser, userData: initial
   const [activeTabKey, setActiveTabKey] = useState('general')
   const [hourlyStopped, setHourlyStopped] = useState<StoppedTimeSession[]>([])
   const [hourlyActive, setHourlyActive] = useState<Array<{ ticket_id: number; start_time: string }>>([])
+
+  useEffect(() => {
+    if (!userData?.id || isCustomer || activeTabKey !== 'my-tickets') return
+    let cancelled = false
+    setCreatedTickets((p) => ({ ...p, loading: true }))
+    fetch(`/api/users/${userData.id}/created-tickets?limit=${createdPage.pageSize}&offset=${(createdPage.current - 1) * createdPage.pageSize}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Failed to load tickets'))))
+      .then((d) => {
+        if (!cancelled) setCreatedTickets({ rows: d.tickets ?? [], total: d.total ?? 0, loading: false })
+      })
+      .catch(() => {
+        if (!cancelled) setCreatedTickets((p) => ({ ...p, loading: false }))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userData?.id, isCustomer, activeTabKey, createdPage])
 
   const fetchHourlyActivityData = useCallback(async () => {
     if (!userData?.id || isCustomer) return
@@ -324,6 +356,9 @@ export default function UserDetailContent({ user: currentUser, userData: initial
       bio: userData.bio || '',
       timezone: userData.timezone || 'UTC',
       locale: userData.locale || 'en',
+      joined_at: userData.joined_at ? dayjs(userData.joined_at) : null,
+      left_at: userData.left_at ? dayjs(userData.left_at) : null,
+      shift_id: userData.shift_id || undefined,
       is_email_verified: userData.is_email_verified || false,
     })
   }
@@ -351,6 +386,8 @@ export default function UserDetailContent({ user: currentUser, userData: initial
       bio: userData.bio || '',
       timezone: userData.timezone || 'UTC',
       locale: userData.locale || 'en',
+      joined_at: userData.joined_at ? dayjs(userData.joined_at) : null,
+      left_at: userData.left_at ? dayjs(userData.left_at) : null,
       is_email_verified: userData.is_email_verified || false,
     })
     router.replace(`/settings/users/${userData.id}`, { scroll: false })
@@ -394,6 +431,13 @@ export default function UserDetailContent({ user: currentUser, userData: initial
         phone: values.phone || null,
         timezone: values.timezone || 'UTC',
         locale: values.locale || 'en',
+        ...(isAdmin
+          ? {
+              joined_at: values.joined_at ? values.joined_at.format('YYYY-MM-DD') : null,
+              left_at: values.left_at ? values.left_at.format('YYYY-MM-DD') : null,
+              shift_id: values.shift_id || null,
+            }
+          : {}),
         is_email_verified: values.is_email_verified || false,
         updated_at: new Date().toISOString(),
       }
@@ -823,6 +867,26 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                             <Option value="Asia/Singapore">Asia/Singapore (SGT)</Option>
                           </Select>
                         </Form.Item>
+                        {isAdmin && (
+                          <>
+                            <Form.Item name="shift_id" label="Shift" extra="Times are WIB. Manage the list in Settings, Shifts.">
+                              <Select
+                                allowClear
+                                placeholder="No shift"
+                                options={shiftOptions.map((s) => ({
+                                  value: s.id,
+                                  label: `${s.title} (${s.start} - ${s.end}${s.crosses_midnight ? ', next day' : ''})`,
+                                }))}
+                              />
+                            </Form.Item>
+                            <Form.Item name="joined_at" label="First working day" extra="Used for team capacity (WIB date).">
+                              <DatePicker style={{ width: '100%' }} />
+                            </Form.Item>
+                            <Form.Item name="left_at" label="Last working day" extra="Leave empty while the person still works here. Set it when they resign or are let go.">
+                              <DatePicker style={{ width: '100%' }} />
+                            </Form.Item>
+                          </>
+                        )}
                         <Form.Item name="locale" label="Locale">
                           <Select prefix={<TranslationOutlined />} placeholder="Select Locale">
                             <Option value="en">English (en)</Option>
@@ -873,6 +937,27 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                             <Text>{userData.timezone || 'UTC'}</Text>
                           </Space>
                         </Descriptions.Item>
+                        {!isCustomer && (
+                          <Descriptions.Item label="Shift">
+                            {(() => {
+                              const sh = shiftOptions.find((x) => x.id === userData?.shift_id)
+                              return sh ? (
+                                <Space>
+                                  <Tag color="geekblue" style={{ margin: 0 }}>{sh.title}</Tag>
+                                  <Text type="secondary">{sh.start} - {sh.end} WIB{sh.crosses_midnight ? ' (next day)' : ''}</Text>
+                                </Space>
+                              ) : (
+                                <Text type="secondary">No shift</Text>
+                              )
+                            })()}
+                          </Descriptions.Item>
+                        )}
+                        {isAdmin && (
+                          <>
+                            <Descriptions.Item label="First working day">{userData.joined_at || '—'}</Descriptions.Item>
+                            <Descriptions.Item label="Last working day">{userData.left_at || '—'}</Descriptions.Item>
+                          </>
+                        )}
                         <Descriptions.Item label="Locale">
                           <Space>
                             <TranslationOutlined />
@@ -1069,7 +1154,45 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                 </Card>
               </Col>
             </Row>
+                    {isCustomer && userData?.id && ['admin', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase()) ? (
+                      <UserCompanyHistory userId={String(userData.id)} />
+                    ) : null}
                     </>
+                  ),
+                },
+                {
+                  key: 'my-tickets',
+                  label: (
+                    <span>
+                      <NumberOutlined />
+                      My Ticket
+                    </span>
+                  ),
+                  children: (
+                    <Table
+                      rowKey="id"
+                      size="middle"
+                      loading={createdTickets.loading}
+                      dataSource={createdTickets.rows}
+                      pagination={{
+                        current: createdPage.current,
+                        pageSize: createdPage.pageSize,
+                        total: createdTickets.total,
+                        showSizeChanger: true,
+                        pageSizeOptions: APP_TABLE_PAGE_SIZE_OPTIONS,
+                        showTotal: appTableShowTotal('tickets'),
+                        onChange: (current, pageSize) => setCreatedPage({ current, pageSize }),
+                      }}
+                      columns={[
+                        { title: 'ID', dataIndex: 'id', width: 90, render: (v: number) => <SpaNavLink href={`/tickets/${v}`}>#{v}</SpaNavLink> },
+                        { title: 'Title', dataIndex: 'title', ellipsis: true, render: (v: string, r: { id: number }) => <SpaNavLink href={`/tickets/${r.id}`} style={{ fontWeight: 500 }}>{v}</SpaNavLink> },
+                        { title: 'Company', dataIndex: 'company_name', width: 220, ellipsis: true, render: (v: string | null) => v || '—' },
+                        { title: 'Type', dataIndex: 'ticket_type', width: 100, render: (v: string) => <Tag>{v}</Tag> },
+                        { title: 'Status', dataIndex: 'status', width: 140, render: (v: string) => <Tag>{v}</Tag> },
+                        { title: 'Created', dataIndex: 'created_at', width: 170, render: (v: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—') },
+                      ]}
+                      scroll={{ x: 'max-content' }}
+                    />
                   ),
                 },
                 {
@@ -1100,7 +1223,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                               title="This Week"
                               value={formatDuration(overviewData.thisWeek)}
                               prefix={<ClockCircleOutlined />}
-                              styles={{ content : { color: '#16324A'} }}
+                              styles={{ content : { color: '#1890ff'} }}
                             />
                           </Card>
                         </Col>
@@ -1118,6 +1241,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
 
                       {!isCustomer && (
                         <DashboardHourlyActivityCard
+                          timezone={userData.timezone}
                           stoppedSessions={hourlyStopped}
                           activeSessions={hourlyActive}
                           style={{ marginTop: 0, marginBottom: 24 }}
@@ -1240,7 +1364,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                           loading={timeTrackerLoading}
                           dataSource={drawerEntryTimesForTicket}
                           pagination={{
-                            pageSize: 15,
+                            defaultPageSize: 15,
                             showSizeChanger: true,
                             pageSizeOptions: APP_TABLE_PAGE_SIZE_OPTIONS,
                             showTotal: appTableShowTotal('entries'),
@@ -1435,7 +1559,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         rowKey="id"
                         loading={timeTrackerLoading}
                         pagination={{
-                          pageSize: 15,
+                          defaultPageSize: 15,
                           showSizeChanger: true,
                           pageSizeOptions: APP_TABLE_PAGE_SIZE_OPTIONS,
                           showTotal: appTableShowTotal('records'),
@@ -1453,6 +1577,27 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                     </div>
                   ),
                 },
+                ...(!isCustomer && userData?.id && ['admin', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase())
+                  ? [
+                      {
+                        key: 'skills',
+                        label: (
+                          <span>
+                            <ToolOutlined />
+                            Skills
+                          </span>
+                        ),
+                        children: (
+                          <Card title="Skills" size="small" style={{ maxWidth: 760 }}>
+                            <UserSkillsField
+                              userId={String(userData.id)}
+                              readOnly={((currentUser as { role?: string }).role ?? '').toLowerCase() !== 'admin'}
+                            />
+                          </Card>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
             </Form>

@@ -5,6 +5,7 @@ import {
   Alert,
   Button,
   Col,
+  DatePicker,
   Flex,
   Form,
   Input,
@@ -15,8 +16,9 @@ import {
   Space,
 } from 'antd'
 import type { FormInstance } from 'antd/es/form'
-import { useCallback,useId, useMemo } from 'react'
+import { useCallback, useEffect, useId, useMemo } from 'react'
 
+import SkillsSelect, { PrimarySkillSelect } from '@/components/skills/SkillsSelect'
 import CommentWysiwyg from '@/components/ticket/detail/CommentWysiwyg'
 
 import type { NewTicketAttachment,TicketAttachment } from './types'
@@ -94,6 +96,30 @@ export default function TicketFormModal({
   const fileInputId = `ticket-files-${rawId.replace(/:/g, '')}`
   const watchedContactUserId = Form.useWatch('contact_user_id', form)
   const watchedCompanyId = Form.useWatch('company_id', form)
+  // A ticket whose company was made inactive keeps showing that company (not a raw id) while it is edited.
+  const companyChoices = useMemo(() => {
+    const c = editingTicket?.company
+    return c && !companies.some((x) => x.id === c.id) ? [...companies, { ...c, name: `${c.name} (inactive)` }] : companies
+  }, [companies, editingTicket])
+  const watchedTypeId = Form.useWatch('type_id', form)
+  const watchedSkillIds = Form.useWatch('skill_ids', form) as string[] | undefined
+
+  // New ticket: start from the company + type default skills (the user can still change them).
+  useEffect(() => {
+    if (!open || editingTicket || showSimplifiedForm || !watchedCompanyId || watchedTypeId == null) return
+    let cancelled = false
+    fetch(`/api/companies/${watchedCompanyId}/skill-defaults?type_id=${watchedTypeId}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { skill_ids?: string[]; primary_skill_id?: string | null } | null) => {
+        if (cancelled || !j?.skill_ids) return
+        form.setFieldValue('skill_ids', j.skill_ids)
+        form.setFieldValue('primary_skill_id', j.primary_skill_id ?? undefined)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [open, editingTicket, showSimplifiedForm, watchedCompanyId, watchedTypeId, form])
   const contactCompanyMismatchHint = useMemo(() => {
     if (showSimplifiedForm || !open) return null
     if (!watchedContactUserId || !watchedCompanyId) return null
@@ -286,6 +312,11 @@ export default function TicketFormModal({
               <InputNumber min={0} precision={0} placeholder="0 = end of queue; 1, 2 …" style={{ width: '100%' }} />
             </Form.Item>
           </Col>
+          <Col span={12}>
+            <Form.Item name="due_date" label="Due Date">
+              <DatePicker showTime format="YYYY-MM-DD HH:mm" allowClear style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
           {!showSimplifiedForm && (
             <>
               <Col span={12}>
@@ -294,12 +325,12 @@ export default function TicketFormModal({
                   allowClear
                   showSearch
                   optionFilterProp="label"
-                  options={companies.map((c) => ({
+                  options={companyChoices.map((c) => ({
                     value: c.id,
                     label: c.name,
                   }))}
                   >
-                    {companies.map((c) => (
+                    {companyChoices.map((c) => (
                       <Option key={c.id} value={c.id} label={c.name}>
                         {c.name}
                       </Option>
@@ -379,6 +410,21 @@ export default function TicketFormModal({
         )}
         </Col>
         </Row>
+
+        {!showSimplifiedForm && !editingTicket ? (
+          <Form.Item
+            name="skill_ids"
+            label="Skills"
+            tooltip="Filled from the company's default skills for this ticket type. You can add or replace them."
+          >
+            <SkillsSelect />
+          </Form.Item>
+        ) : null}
+        {!showSimplifiedForm && !editingTicket && (watchedSkillIds?.length ?? 0) > 1 ? (
+          <Form.Item name="primary_skill_id" label="Primary skill" tooltip="Optional: the skill that matters most. Used to pick between equally suited people.">
+            <PrimarySkillSelect skillIds={watchedSkillIds ?? []} />
+          </Form.Item>
+        ) : null}
 
         <Form.Item>
           <Flex justify="space-between" align="center" wrap="wrap" gap={8}>

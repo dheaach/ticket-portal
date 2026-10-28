@@ -40,6 +40,8 @@ export interface TicketRecord {
   company_id: string | null
   created_at: string
   updated_at: string
+  /** Staff only: last comment, change or tracked time by a person. */
+  last_activity_at?: string | null
   /** Populated for ticket_type project (board/API). */
   project_id?: string | null
   project_status_id?: number | null
@@ -48,7 +50,7 @@ export interface TicketRecord {
   by_label?: string
   team_name?: string
   type?: { id: number; title: string; slug: string; color: string } | null
-  company?: { id: string; name: string; color?: string; email?: string | null } | null
+  company?: { id: string; name: string; color?: string; email?: string | null; display_order?: number | null } | null
   tags?: Array<{ id: string; name: string; slug: string; color?: string }>
   assignees?: Array<{ id: string; user_id: string; user_name?: string }>
   checklist_items?: Array<unknown>
@@ -126,7 +128,7 @@ export const DEFAULT_ALL_STATUS_COLUMNS: StatusColumn[] = [
   { id: 'am_review', title: 'AM Review', color: '#6D9EEB' },
   { id: 'client_review', title: 'Client Review', color: '#52c41a' },
   { id: 'feedback_received', title: 'Feedback Received', color: '#C9DAF8' },
-  { id: 'revision', title: 'Revision', color: '#16324A' },
+  { id: 'revision', title: 'Revision', color: '#1890ff' },
   { id: 'pending', title: 'Pending', color: '#8c8c8c' },
   { id: 'resolved', title: 'Resolved', color: '#52c41a' },
   { id: 'closed', title: 'Closed', color: '#595959' },

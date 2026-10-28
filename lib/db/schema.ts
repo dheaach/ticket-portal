@@ -8,9 +8,11 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
+  time,
   timestamp,
   unique,
   uniqueIndex,
@@ -41,7 +43,14 @@ export const users = pgTable('users', {
   bio: text('bio'),
   timezone: varchar('timezone', { length: 50 }).default('UTC'),
   locale: varchar('locale', { length: 10 }).default('en'),
+  /** job_types.slug preselected in the ticket Time Tracker. */
+  defaultJobType: varchar('default_job_type', { length: 64 }),
   mustChangePassword: boolean('must_change_password').default(false),
+  /** First / last working day (WIB calendar date). Used for team capacity. */
+  joinedAt: date('joined_at'),
+  leftAt: date('left_at'),
+  /** The shift this person is on right now (catalog: shifts). */
+  shiftId: uuid('shift_id'),
   metadata: jsonb('metadata'),
   companyId: uuid('company_id'),
   createdAt: ts('created_at').notNull().defaultNow(),
@@ -61,7 +70,10 @@ export const companies = pgTable('companies', {
   activeTeamId: uuid('active_team_id'),
   activeManagerId: uuid('active_manager_id'),
   activeTime: integer('active_time').notNull().default(0),
+  /** Manual position of the customer in Round Robin and reports (1 = first). Null = after all numbered ones. */
+  displayOrder: integer('display_order'),
   isCustomer: boolean('is_customer').notNull().default(false),
+  freshdeskId: bigint('freshdesk_id', { mode: 'number' }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
@@ -245,6 +257,8 @@ export const tickets = pgTable('tickets', {
   /** Numeric Priority level (not an FK to ticket_priorities). NULL when closed support (out of queue). */
   priority: integer('priority').default(0),
   createdVia: varchar('created_via', { length: 50 }),
+  /** Set on a secondary ticket after a merge: the primary ticket it is "Part of". */
+  mergedIntoTicketId: integer('merged_into_ticket_id'),
   lastReadAt: ts('last_read_at'),
   /** When a customer last opened the ticket (unread-dot for customers). */
   customerLastReadAt: ts('customer_last_read_at'),
@@ -259,6 +273,8 @@ export const tickets = pgTable('tickets', {
   projectStatusId: integer('project_status_id').references(() => projectStatuses.id, {
     onDelete: 'set null',
   }),
+  /** Origin of the ticket: 'freshdesk' for imported tickets, null for natively created ones. */
+  source: varchar('source', { length: 32 }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
@@ -334,10 +350,14 @@ export const ticketComments = pgTable('ticket_comments', {
   createdAt: ts('created_at').notNull().defaultNow(),
   /** Wall-clock time when the row was actually inserted into the DB. Never back-dated (unlike createdAt for email imports). Used for unread-dot logic. */
   receivedAt: ts('received_at').notNull().defaultNow(),
+  /** Freshdesk conversation ID — used to dedup on re-import/resync. Null for comments created natively. */
+  fdConversationId: bigint('fd_conversation_id', { mode: 'number' }).unique(),
   /** Last editor (agent who edited the comment, may differ from original author). */
   editedByUserId: uuid('edited_by_user_id').references(() => users.id, { onDelete: 'set null' }),
   /** When the comment was last edited. */
   editedAt: ts('edited_at'),
+  /** Set when this reply was split into its own ticket (the reply stays, marked "Split to #N"). */
+  splitToTicketId: integer('split_to_ticket_id'),
 })
 
 /** One saved AI summary per anchor (per comment, description, or ticket header). */
@@ -885,3 +905,132 @@ export const appSettings = pgTable('app_settings', {
   value: text('value'),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
+
+/** In-app ticket notifications (bell): one row per recipient. */
+export const ticketNotifications = pgTable(
+  'ticket_notifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    ticketId: integer('ticket_id').notNull(),
+    ticketTitle: varchar('ticket_title', { length: 200 }).notNull().default(''),
+    type: varchar('type', { length: 32 }).notNull(),
+    title: varchar('title', { length: 200 }).notNull().default(''),
+    body: text('body').notNull().default(''),
+    read: boolean('read').notNull().default(false),
+    readAt: ts('read_at'),
+    actorUserId: uuid('actor_user_id'),
+    actorName: varchar('actor_name', { length: 200 }).notNull().default(''),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('ticket_notifications_user_created_idx').on(t.userId, t.createdAt)]
+)
+
+/** Per-user daily capacity (WIB calendar date). One row per active admin/manager/staff per day. */
+export const userDailyCapacity = pgTable(
+  'user_daily_capacity',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    capacityDate: date('capacity_date').notNull(),
+    /** Hours available that day (0 = off). */
+    hours: numeric('hours', { precision: 4, scale: 2 }).notNull().default('8'),
+    /** work | weekend | holiday | leave | sick | piket | other */
+    reason: varchar('reason', { length: 16 }).notNull().default('work'),
+    /** auto = created by the daily job; manual = set by an admin (never overwritten by the job). */
+    source: varchar('source', { length: 8 }).notNull().default('auto'),
+    updatedBy: uuid('updated_by'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    unique('user_daily_capacity_user_id_capacity_date_key').on(t.userId, t.capacityDate),
+    index('user_daily_capacity_date_idx').on(t.capacityDate),
+  ]
+)
+
+/** Non-working days (WIB calendar date). */
+export const holidays = pgTable('holidays', {
+  holidayDate: date('holiday_date').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  createdBy: uuid('created_by'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+})
+
+// ============ Skills ============
+/** Skill catalog (e.g. "WordPress", "Design"). */
+export const skills = pgTable('skills', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull().unique(),
+  color: varchar('color', { length: 20 }).default('#1677ff'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+})
+
+export const userSkills = pgTable(
+  'user_skills',
+  {
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+    /** Proficiency 1..10 (stored only; not used by the recommendation yet). */
+    level: integer('level').notNull().default(5),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.skillId] })]
+)
+
+/** Skills a ticket needs (starts from the company + type defaults, editable per ticket). */
+export const ticketSkills = pgTable(
+  'ticket_skills',
+  {
+    ticketId: integer('ticket_id').notNull().references(() => tickets.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+    /** The skill that matters most for this ticket (at most one). */
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.ticketId, t.skillId] })]
+)
+
+/** Pre-skills: new tickets of this type for this company start with these skills. */
+export const companyTypeSkills = pgTable(
+  'company_type_skills',
+  {
+    companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    typeId: integer('type_id').notNull().references(() => ticketTypes.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.typeId, t.skillId] })]
+)
+
+// ============ Shifts ============
+/** Work shifts (WIB). An end earlier than the start means the shift crosses midnight. */
+export const shifts = pgTable('shifts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: varchar('title', { length: 100 }).notNull().unique(),
+  startTime: time('start_time').notNull(),
+  endTime: time('end_time').notNull(),
+  description: text('description'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+})
+
+// ============ User company history ============
+/** Every change of a person's company, with where it came from (admin edit, email CC, company leader ...). */
+export const userCompanyChanges = pgTable(
+  'user_company_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    fromCompanyId: uuid('from_company_id'),
+    toCompanyId: uuid('to_company_id'),
+    source: varchar('source', { length: 40 }).notNull(),
+    actorUserId: uuid('actor_user_id'),
+    ticketId: integer('ticket_id'),
+    note: text('note'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('user_company_changes_user_idx').on(t.userId, t.createdAt)]
+)

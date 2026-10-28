@@ -2,15 +2,16 @@
 
 import { DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { Button, Card, Col, Form, Input, InputNumber, Layout, message, Modal, Popconfirm, Row, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo,useState } from 'react'
 
 import AppTable from '@/components/common/AppTable'
+import DateDisplay from '@/components/common/DateDisplay'
 import { tagPreviewFillHex } from '@/components/common/KanbanTagPreview'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
-import { canEditCompanies } from '@/lib/auth-utils'
 import { kanbanTagStyle } from '@/lib/kanban-tag-chip-style'
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -21,16 +22,13 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   }
   return res.json()
 }
-import type { ColumnsType } from 'antd/es/table'
-
-import DateDisplay from '@/components/common/DateDisplay'
 
 const { Content } = Layout
 const { Title } = Typography
 const { Option } = Select
 
 interface CompaniesContentProps {
-  user: { id: string; email?: string | null; name?: string | null; role?: string }
+  user: { id: string; email?: string | null; name?: string | null }
 }
 
 interface CompanyRecord {
@@ -43,6 +41,7 @@ interface CompanyRecord {
   active_team_id?: string | null
   active_manager_id?: string | null
   active_time?: number
+  display_order?: number | null
   is_customer?: boolean
   created_at: string
   updated_at: string
@@ -106,15 +105,14 @@ function ColorPickerWithInput({
 
 export default function CompaniesContent({ user: currentUser }: CompaniesContentProps) {
   const router = useRouter()
-  const canEdit = canEditCompanies(currentUser.role)
   const [collapsed, setCollapsed] = useState(false)
   const [companies, setCompanies] = useState<CompanyRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingCompany, setEditingCompany] = useState<CompanyRecord | null>(null)
   const [searchText, setSearchText] = useState('')
-  const [filterStatus, setFilterStatus] = useState<boolean | undefined>(undefined)
   const [filterIsCustomer, setFilterIsCustomer] = useState<boolean | undefined>(undefined)
+  const [filterStatus, setFilterStatus] = useState<boolean | undefined>(undefined)
   const [leaderOptions, setLeaderOptions] = useState<LeaderOption[]>([])
   const [teamOptions, setTeamOptions] = useState<TeamOption[]>([])
   const [managerOptions, setManagerOptions] = useState<ManagerOption[]>([])
@@ -132,17 +130,17 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
             (c.email || '').toLowerCase().includes(q)
           if (!matchesSearch) return false
         }
-        if (filterStatus !== undefined && c.is_active !== filterStatus) return false
         if (filterIsCustomer !== undefined && (c.is_customer ?? false) !== filterIsCustomer) return false
+        if (filterStatus !== undefined && (c.is_active ?? true) !== filterStatus) return false
         return true
       })
       .sort((a, b) => Number(b.is_customer ?? false) - Number(a.is_customer ?? false))
-  }, [companies, searchText, filterStatus, filterIsCustomer])
+  }, [companies, searchText, filterIsCustomer, filterStatus])
 
   const fetchCompanies = async () => {
     setLoading(true)
     try {
-      const res = await apiFetch<{ data: CompanyRecord[] }>('/api/companies')
+      const res = await apiFetch<{ data: CompanyRecord[] }>('/api/companies?include_inactive=1')
       setCompanies(res.data || [])
     } catch (error: unknown) {
       message.error((error as Error).message || 'Failed to fetch companies')
@@ -197,7 +195,9 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       active_team_id: undefined,
       active_manager_id: undefined,
       active_time: 0,
+      display_order: undefined,
       is_customer: false,
+      is_active: true,
     })
     setModalVisible(true)
   }
@@ -212,7 +212,9 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       active_team_id: record.active_team_id || undefined,
       active_manager_id: record.active_manager_id || undefined,
       active_time: record.active_time ?? 0,
+      display_order: record.display_order ?? undefined,
       is_customer: record.is_customer ?? false,
+      is_active: record.is_active ?? true,
     })
     setModalVisible(true)
   }
@@ -235,13 +237,17 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
     active_team_id?: string | null
     active_manager_id?: string | null
     active_time?: number | null
+    display_order?: number | null
     is_customer?: boolean
+    is_active?: boolean
   }) => {
     const staffPayload = {
       active_team_id: values.active_team_id ?? null,
       active_manager_id: values.active_manager_id ?? null,
       active_time: values.active_time ?? 0,
+      display_order: values.display_order ?? null,
       is_customer: values.is_customer === true,
+      is_active: values.is_active !== false,
     }
     setSaving(true)
     try {
@@ -293,7 +299,10 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       sorter: (a, b) => (a.name || '').localeCompare(b.name || ''),
       sortDirections: ['ascend', 'descend'],
       render: (name: string, record: CompanyRecord) => (
-        <Tag style={kanbanTagStyle({ fillHex: tagPreviewFillHex(record.color) })}>{name}</Tag>
+        <Space size={6}>
+          <Tag style={kanbanTagStyle({ fillHex: tagPreviewFillHex(record.color) })}>{name}</Tag>
+          {record.is_active === false ? <Tag color="red">Inactive</Tag> : null}
+        </Space>
       ),
     },
     {
@@ -333,6 +342,14 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
       },
     },
     {
+      title: 'Order',
+      key: 'display_order',
+      width: 80,
+      align: 'center',
+      sorter: (a: CompanyRecord, b: CompanyRecord) => (a.display_order ?? 1e9) - (b.display_order ?? 1e9),
+      render: (_: unknown, record: CompanyRecord) => record.display_order ?? '—',
+    },
+    {
       title: 'Active Time',
       key: 'active_time',
       width: 110,
@@ -369,8 +386,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               onClick={() => router.push(`/settings/companies/${record.id}`)}
             />
           </Tooltip>
-          {canEdit && (
-            <>
           <Tooltip title="Edit">
             <Button
               type="primary"
@@ -389,8 +404,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               <Button type="primary" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
-            </>
-          )}
         </Space>
       ),
     },
@@ -416,6 +429,20 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                   }}
                   style={{ width: 260 }}
                 />
+                <Select
+                  placeholder="Status"
+                  allowClear
+                  value={filterStatus}
+                  onChange={(v) => {
+                    setFilterStatus(v)
+                    setPagination((p) => ({ ...p, current: 1 }))
+                  }}
+                  style={{ width: 140 }}
+                  options={[
+                    { value: true, label: 'Active' },
+                    { value: false, label: 'Inactive' },
+                  ]}
+                />
                 {/* <Select
                   placeholder="Filter Is Customer"
                   allowClear
@@ -429,7 +456,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                   <Option value={true}>Customer</Option>
                   <Option value={false}>Non-customer</Option>
                 </Select> */}
-                {canEdit && (
                 <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -437,7 +463,6 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               >
                 Add Company
               </Button>
-                )}
               </Space>
             </div>
 
@@ -497,7 +522,7 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
               <Form.Item
                 name="leader_user_id"
                 label="Company Leader"
-                extra="Kosongkan untuk company internal (tanpa customer leader)"
+                extra="Leave blank for internal companies (no customer leader)"
               >
                 <Select
                   showSearch
@@ -553,6 +578,26 @@ export default function CompaniesContent({ user: currentUser }: CompaniesContent
                     initialValue={0}
                   >
                     <InputNumber min={0} precision={0} addonAfter="H" style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Form.Item
+                    name="display_order"
+                    label="Display order"
+                    tooltip="Position in Round Robin and reports (1 = first). Leave empty to list after the numbered companies."
+                  >
+                    <InputNumber min={0} precision={0} placeholder="—" style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={4}>
+                  <Form.Item
+                    name="is_active"
+                    label="Active"
+                    valuePropName="checked"
+                    initialValue={true}
+                    tooltip="Inactive companies are hidden from every filter and list. They only appear here in Company management."
+                  >
+                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} sm={5}>

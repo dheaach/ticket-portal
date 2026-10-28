@@ -113,6 +113,7 @@ async function mapCommentRowsToClient(rows: CommentRowJoined[]) {
     created_at: r.comment.createdAt ? new Date(r.comment.createdAt).toISOString() : '',
     visibility: r.comment.visibility ?? 'reply',
     author_type: r.comment.authorType ?? 'agent',
+    split_to_ticket_id: r.comment.splitToTicketId ?? null,
     tagged_user_ids: r.comment.taggedUserIds ?? [],
     tagged_users: (r.comment.taggedUserIds ?? []).flatMap((id) => {
       const u = taggedUserById[id]
@@ -338,7 +339,23 @@ export async function getTicketDetail(ticketId: number, options?: TicketDetailOp
     }
   }
 
+  const [mergedParentRow] = t.mergedIntoTicketId
+    ? await db
+        .select({ id: tickets.id, title: tickets.title })
+        .from(tickets)
+        .where(eq(tickets.id, t.mergedIntoTicketId))
+        .limit(1)
+    : []
+  const mergedChildRows = await db
+    .select({ id: tickets.id, title: tickets.title })
+    .from(tickets)
+    .where(eq(tickets.mergedIntoTicketId, t.id))
+    .orderBy(tickets.id)
+    .limit(50)
+
   const ticketData = {
+    merged_into: mergedParentRow ? { id: mergedParentRow.id, title: mergedParentRow.title } : null,
+    merged_tickets: mergedChildRows.map((r) => ({ id: r.id, title: r.title })),
     id: t.id,
     title: t.title,
     description: t.description,
@@ -363,6 +380,7 @@ export async function getTicketDetail(ticketId: number, options?: TicketDetailOp
     project_statuses,
     created_at: t.createdAt ? new Date(t.createdAt).toISOString() : '',
     updated_at: t.updatedAt ? new Date(t.updatedAt).toISOString() : '',
+    source: t.source ?? null,
     gmail_thread_id: t.gmailThreadId,
     created_via: t.createdVia,
     last_read_at: (() => {

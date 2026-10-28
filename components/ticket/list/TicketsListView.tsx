@@ -35,20 +35,26 @@ import {
   TICKETS_LIST_SORT_ORDER,
 } from './types'
 
-type ColKey = 'company' | 'priority' | 'type' | 'tags' | 'due_date' | 'team' | 'status' | 'updated_at'
+type ColKey = 'company' | 'priority' | 'type' | 'tags' | 'due_date' | 'team' | 'status' | 'created_at' | 'updated_at' | 'last_activity'
 
-const ALL_COL_KEYS: ColKey[] = ['company', 'priority', 'type', 'tags', 'due_date', 'team', 'status', 'updated_at']
+const ALL_COL_KEYS: ColKey[] = ['company', 'priority', 'type', 'tags', 'due_date', 'team', 'status', 'created_at', 'updated_at', 'last_activity']
 const COL_LABELS: Record<ColKey, string> = {
   company: 'Company', priority: 'Priority', type: 'Type',
-  tags: 'Tags', due_date: 'Due date', team: 'Team', status: 'Status', updated_at: 'Last update',
+  tags: 'Tags', due_date: 'Due date', team: 'Team', status: 'Status', created_at: 'Date created', updated_at: 'Last update', last_activity: 'Last activity',
 }
 const LS_KEY = 'tickets_list_col_config'
 
 interface ColConfig { order: ColKey[]; hidden: ColKey[] }
 
-const CUSTOMER_HIDDEN_COLS: ColKey[] = ['company', 'team']
+const CUSTOMER_HIDDEN_COLS: ColKey[] = ['company', 'team', 'last_activity']
 
+/** Customers never get the staff-only Last activity column. */
 function readColConfig(isCustomer = false): ColConfig {
+  const cfg = readColConfigRaw(isCustomer)
+  return isCustomer ? { order: cfg.order.filter((k) => k !== 'last_activity'), hidden: cfg.hidden.filter((k) => k !== 'last_activity') } : cfg
+}
+
+function readColConfigRaw(isCustomer = false): ColConfig {
   const defaultHidden = isCustomer ? [...CUSTOMER_HIDDEN_COLS] : []
   try {
     const key = isCustomer ? `${LS_KEY}_customer` : LS_KEY
@@ -75,6 +81,10 @@ interface TicketsListViewProps {
   onDelete: (id: number) => void
   onBulkMoveToSpam?: (ids: number[]) => void | Promise<void>
   onBulkMoveToTrash?: (ids: number[]) => void | Promise<void>
+  /** Trash only, admin only. */
+  onBulkDeletePermanently?: (ids: number[]) => void | Promise<void>
+  /** Ids of every ticket in the current list (all pages), for "select all". */
+  onSelectAllMatching?: () => Promise<number[]>
   onFilterByStatus?: (statusSlug: string) => void
   onFilterByTag?: (tagId: string) => void
   onFilterByCompany?: (companyId: string) => void
@@ -96,6 +106,7 @@ const SORTABLE_COLUMN_FIELDS: Partial<Record<string, TicketSortField>> = {
   due_date: 'due_date',
   team: 'team',
   status: 'status',
+  created_at: 'created_at',
   updated_at: 'updated_at',
 }
 
@@ -109,6 +120,8 @@ export default function TicketsListView({
   onDelete,
   onBulkMoveToSpam,
   onBulkMoveToTrash,
+  onBulkDeletePermanently,
+  onSelectAllMatching,
   onFilterByStatus,
   onFilterByTag,
   onFilterByCompany,
@@ -176,7 +189,8 @@ export default function TicketsListView({
     try { sessionStorage.setItem('tickets_list_page', JSON.stringify(effectivePagination)) } catch { /* ignore */ }
   }, [effectivePagination])
 
-  const bulkEnabled = !isCustomer && (onBulkMoveToSpam || onBulkMoveToTrash)
+  const bulkEnabled = !isCustomer && (onBulkMoveToSpam || onBulkMoveToTrash || onBulkDeletePermanently)
+  const [selectingAll, setSelectingAll] = useState(false)
   const inSpamFolder = filterTicketType === 'spam'
   const inTrashFolder = filterTicketType === 'trash'
   const selectedIds = selectedRowKeys.map((k) => Number(k)).filter((n) => !Number.isNaN(n))
@@ -193,6 +207,31 @@ export default function TicketsListView({
         setSelectedRowKeys([])
       },
     })
+  }
+
+  const runBulkPurge = () => {
+    if (!onBulkDeletePermanently || selectedIds.length === 0) return
+    Modal.confirm({
+      title: `Delete ${selectedIds.length} ticket(s) permanently?`,
+      content: 'This removes the tickets with their comments, attachments, time entries and history. It cannot be undone.',
+      okText: 'Delete permanently',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        await onBulkDeletePermanently(selectedIds)
+        setSelectedRowKeys([])
+      },
+    })
+  }
+
+  const selectEverything = async () => {
+    if (!onSelectAllMatching) return
+    setSelectingAll(true)
+    try {
+      setSelectedRowKeys(await onSelectAllMatching())
+    } finally {
+      setSelectingAll(false)
+    }
   }
 
   const runBulkTrash = () => {
@@ -266,6 +305,31 @@ export default function TicketsListView({
           ? <Tag style={kanbanTagStyle({ fillHex: KANBAN_SEMANTIC_BLUE })}>{record.team_name}</Tag>
           : '—',
     },
+    created_at: {
+      title: 'Date created', dataIndex: 'created_at', key: 'created_at', width: 160,
+      render: (_: unknown, record: TicketRecord) =>
+        record.created_at ? (
+          <span title={new Date(record.created_at).toLocaleString()} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            {new Date(record.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+            {' '}
+            {new Date(record.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        ) : '—',
+    },
+    last_activity: {
+      title: 'Last activity', dataIndex: 'last_activity_at', key: 'last_activity', width: 160,
+      render: (_: unknown, record: TicketRecord) =>
+        record.last_activity_at ? (
+          <span
+            title={`${new Date(record.last_activity_at).toLocaleString()}. Last comment, change or tracked time by a person (automation and queue renumbering not counted).`}
+            style={{ fontSize: 12 }}
+          >
+            {new Date(record.last_activity_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+            {' '}
+            {new Date(record.last_activity_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        ) : '—',
+    },
     updated_at: {
       title: 'Last update', dataIndex: 'updated_at', key: 'updated_at', width: 160,
       render: (_: unknown, record: TicketRecord) =>
@@ -333,7 +397,7 @@ export default function TicketsListView({
       ))}
       <div style={{ borderTop: '1px solid #f0f0f0', marginTop: 8, paddingTop: 8 }}>
         <Button size="small" type="link" style={{ padding: 0, fontSize: 12 }}
-          onClick={() => saveColConfig({ order: [...ALL_COL_KEYS], hidden: [] })}>
+          onClick={() => saveColConfig({ order: ALL_COL_KEYS.filter((k) => !isCustomer || k !== 'last_activity'), hidden: [] })}>
           Reset to default
         </Button>
       </div>
@@ -343,16 +407,33 @@ export default function TicketsListView({
   return (
     <div style={{ width: '100%' }}>
       <Flex justify="space-between" align="center" style={{ padding: '0 24px 8px' }}>
-        {bulkEnabled && selectedIds.length > 0 ? (
+        {bulkEnabled && (selectedIds.length > 0 || inSpamFolder || inTrashFolder) ? (
           <Flex align="center" wrap="wrap" gap={8}>
-            <span style={{ color: 'var(--ant-color-text-secondary, #8c8c8c)', fontSize: 13 }}>
-              {selectedIds.length} selected
-            </span>
-            {!inSpamFolder && onBulkMoveToSpam ? (
+            {selectedIds.length > 0 ? (
+              <span style={{ color: 'var(--ant-color-text-secondary, #8c8c8c)', fontSize: 13 }}>
+                {selectedIds.length} selected
+              </span>
+            ) : (
+              <span style={{ color: 'var(--ant-color-text-secondary, #8c8c8c)', fontSize: 13 }}>
+                Tick tickets to move or delete them
+              </span>
+            )}
+            {(inSpamFolder || inTrashFolder) && onSelectAllMatching && (serverPaging?.total ?? 0) > 0 ? (
+              <Button type="link" size="small" loading={selectingAll} onClick={() => void selectEverything()}>
+                Select all {serverPaging!.total > 500 ? 'first 500' : serverPaging!.total}
+              </Button>
+            ) : null}
+            {selectedIds.length > 0 ? (
+              <Button type="link" size="small" onClick={() => setSelectedRowKeys([])}>Clear selection</Button>
+            ) : null}
+            {selectedIds.length > 0 && !inSpamFolder && onBulkMoveToSpam ? (
               <Button type="default" icon={<WarningOutlined />} onClick={runBulkSpam}>Move to spam</Button>
             ) : null}
-            {!inTrashFolder && onBulkMoveToTrash ? (
+            {selectedIds.length > 0 && !inTrashFolder && onBulkMoveToTrash ? (
               <Button type="default" icon={<InboxOutlined />} onClick={runBulkTrash}>Move to trash</Button>
+            ) : null}
+            {selectedIds.length > 0 && inTrashFolder && onBulkDeletePermanently ? (
+              <Button danger type="primary" icon={<DeleteOutlined />} onClick={runBulkPurge}>Delete permanently</Button>
             ) : null}
           </Flex>
         ) : <div />}
@@ -394,7 +475,7 @@ export default function TicketsListView({
               pageSize: serverPaging.pageSize,
               total: serverPaging.total,
               showSizeChanger: true,
-              pageSizeOptions: ['10', '15', '20', '50'],
+              pageSizeOptions: ['10', '15', '20', '50', '100', '200'],
               showTotal: (t) => `Total ${t} tickets`,
               onChange: (page, ps) => serverPaging.onChange(ps !== serverPaging.pageSize ? 1 : page, ps),
             }
@@ -403,7 +484,7 @@ export default function TicketsListView({
               pageSize: effectivePagination.pageSize,
               total: sortedTickets.length,
               showSizeChanger: true,
-              pageSizeOptions: ['10', '15', '20', '50'],
+              pageSizeOptions: ['10', '15', '20', '50', '100', '200'],
               showTotal: (t) => `Total ${t} tickets`,
               onChange: (page, ps) =>
                 setPagination((prev) => ({ current: page, pageSize: ps ?? prev.pageSize })),
@@ -416,8 +497,7 @@ export default function TicketsListView({
         withServerSort({
           title: 'Title', dataIndex: 'title', key: 'title', ellipsis: true,
           render: (title: string, record: TicketRecord) => (
-            <a href={`/tickets/${record.id}`} style={{ cursor: 'pointer', color: '#1677ff', padding: 0, height: 'auto', textDecoration: 'underline' }}
-              onClick={(e) => { if (e.button !== 0 || e.ctrlKey || e.metaKey) return; e.preventDefault(); router.push(`/tickets/${record.id}`) }}>
+            <a href={`/tickets/${record.id}`} target={isCustomer ? undefined : '_blank'} rel={isCustomer ? undefined : 'noopener noreferrer'} style={{ cursor: 'pointer', color: '#1677ff', padding: 0, height: 'auto', textDecoration: 'underline' }}>
               {record.has_unread_replies && <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ff4d4f', marginRight: 6, verticalAlign: 'middle' }} title="Unread replies" />}
               {title && title.length > 50 ? title.slice(0, 50) + '...' : title}
               {record.created_via === 'recurring' && <SyncOutlined title="Created by recurring ticket" style={{ fontSize: 11, color: '#722ed1', marginLeft: 6, verticalAlign: 'middle' }} />}

@@ -10,7 +10,9 @@ import {
     FileMarkdownOutlined,
     FolderOutlined,
     LeftOutlined,
+    MergeCellsOutlined,
     PrinterOutlined,
+    ReloadOutlined,
     RightOutlined,
     WarningOutlined,
     WarningTwoTone,
@@ -41,6 +43,7 @@ const { useBreakpoint } = Grid
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef,useState } from 'react'
 
+import MergeTicketModal from '@/components/ticket/detail/MergeTicketModal'
 import StopTimerNoteModal from '@/components/ticket/StopTimerNoteModal'
 import { uploadTicketFile } from '@/utils/storage'
 
@@ -243,6 +246,7 @@ export default function TicketDetailContent({
 
     const [loading, setLoading] = useState(false)
     const [classifyLoading, setClassifyLoading] = useState<'support' | 'spam' | 'trash' | null>(null)
+    const [resyncLoading, setResyncLoading] = useState(false)
     const [nextTicketNavLoading, setNextTicketNavLoading] = useState(false)
     const [newChecklistTitle, setNewChecklistTitle] = useState('')
     const [commentVisibility, setCommentVisibility] = useState<'note' | 'reply' | null>(null)
@@ -251,7 +255,9 @@ export default function TicketDetailContent({
     }, [displayTicket?.id])
     const [editingComment, setEditingComment] = useState<string | null>(null)
     const [editingCommentValue, setEditingCommentValue] = useState('')
+    const [mergeOpen, setMergeOpen] = useState(false)
     const [removingCommentAttachmentKey, setRemovingCommentAttachmentKey] = useState<string | null>(null)
+    const [addingCommentAttachmentId, setAddingCommentAttachmentId] = useState<string | null>(null)
     const [editingAttribute, setEditingAttribute] = useState<string | null>(null)
     const [newAttributeKey, setNewAttributeKey] = useState('')
     const [newAttributeValue, setNewAttributeValue] = useState('')
@@ -316,11 +322,11 @@ export default function TicketDetailContent({
     const contactUserOptionsForTicket = useMemo(() => {
         const agentUsers = (users || [])
             .filter((u: { email?: string; role?: string }) => String(u?.email || '').trim() && (u?.role ?? '').toLowerCase() !== 'customer')
-            .map((u: { id: string; full_name?: string | null; email: string; company_id?: string | null }) => ({
-                id: u.id,
-                full_name: u.full_name ?? null,
-                email: u.email,
-                company_id: u.company_id ?? null,
+            .map((u: any) => ({
+                id: u.id as string,
+                full_name: (u.full_name ?? null) as string | null,
+                email: u.email as string,
+                company_id: (u.company_id ?? null) as string | null,
                 _type: 'agent' as const,
             }))
         const customerUsers = (companyCustomers || [])
@@ -943,6 +949,43 @@ export default function TicketDetailContent({
         }
     }
 
+    const handleAddCommentAttachments = async (commentId: string, files: File[]) => {
+        if (!files.length) return
+        setAddingCommentAttachmentId(commentId)
+        try {
+            const uploaded: { file_url: string; file_name: string; file_path: string }[] = []
+            for (const file of files) {
+                const result = await uploadTicketFile(file, displayTicket.id, 'comments', displayTicket?.company?.name ?? 'unknown')
+                if (result.url && result.path) {
+                    uploaded.push({ file_url: result.url, file_name: file.name, file_path: result.path })
+                } else if (result.error) {
+                    message.error(`${file.name}: ${result.error}`)
+                }
+            }
+            if (!uploaded.length) return
+            const res = await apiFetch<{ attachments: { id: string; file_url: string; file_name: string }[] }>(
+                `/api/tickets/${displayTicket.id}/comments/${commentId}/attachments`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ attachments: uploaded }),
+                }
+            )
+            setComments((prev) =>
+                prev.map((c) =>
+                    c.id === commentId
+                        ? { ...c, comment_attachments: [...(c.comment_attachments || []), ...res.attachments] }
+                        : c
+                )
+            )
+            message.success('Attachment added')
+        } catch (err: any) {
+            message.error(err?.message || 'Failed to add attachment')
+        } finally {
+            setAddingCommentAttachmentId(null)
+        }
+    }
+
     const handleDeleteComment = async (commentId: string) => {
         try {
             await apiFetch(`/api/tickets/${displayTicket.id}/comments/${commentId}`, { method: 'DELETE' })
@@ -1197,6 +1240,7 @@ export default function TicketDetailContent({
                 email: string
                 avatar_url?: string | null
             }>
+            const contactRow = d.contactUserId ? fromLists.find((u) => u.id === d.contactUserId) : null
 
             const syncedCompanyId =
                 res && typeof res === 'object' && 'company_id' in res ? res.company_id : undefined
@@ -1265,7 +1309,7 @@ export default function TicketDetailContent({
         }
     }
 
-    const handleSaveCustomerChanges = async (changes: { type_id?: number | null; priority?: number | null }) => {
+    const handleSaveCustomerChanges = async (changes: { type_id?: number | null; priority?: number | null; due_date?: string | null }) => {
         setCustomerChangesSaving(true)
         try {
             await apiFetch(`/api/tickets/${displayTicket.id}`, {
@@ -1281,6 +1325,7 @@ export default function TicketDetailContent({
                     type: changes.type_id != null ? ticketTypes.find((t) => t.id === changes.type_id) ?? null : null,
                 }),
                 ...(changes.priority !== undefined && { priority: changes.priority }),
+                ...(changes.due_date !== undefined && { due_date: changes.due_date }),
             }))
             router.refresh()
         } catch (err: unknown) {
@@ -1394,6 +1439,37 @@ export default function TicketDetailContent({
         [displayTicket?.id, router],
     )
 
+    const resyncFromFreshdesk = useCallback(async () => {
+        const tid = displayTicket?.id
+        if (tid == null) return
+        setResyncLoading(true)
+        try {
+            const res = await apiFetch<{
+                ok: boolean
+                comments: { imported: number; skipped: number }
+                attachments?: { imported: number; failed: number; errors: { file: string; reason: string }[] }
+            }>(
+                '/api/freshdesk/resync-ticket',
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket_id: tid }) },
+            )
+            const att = res.attachments
+            message.success(
+                `Resync done — ${res.comments.imported} new comment(s), ${att?.imported ?? 0} new attachment(s)`,
+            )
+            if (att && att.failed > 0) {
+                message.warning(
+                    `${att.failed} attachment(s) failed: ${att.errors.map((e) => `${e.file} (${e.reason})`).join('; ')}`,
+                    10,
+                )
+            }
+            await mergeDetailFromServer()
+        } catch (e: unknown) {
+            message.error(e instanceof Error ? e.message : 'Resync failed')
+        } finally {
+            setResyncLoading(false)
+        }
+    }, [displayTicket?.id, router])
+
     type MyOpenTicketNavDirection = 'next' | 'prev'
 
     const navigateMyOpenTicket = useCallback(
@@ -1493,8 +1569,9 @@ export default function TicketDetailContent({
                 <Content style={{ padding: '0', background: 'var(--layout-bg)', minHeight: 'calc(100vh - 56px)' }}>
                     <div style={{
                         position: 'sticky',
-                        top: 0,
-                        zIndex: 100,
+                        // Stick right below the global navbar (56px) instead of on top of it.
+                        top: 56,
+                        zIndex: 99,
                         background: 'var(--ant-color-bg-container, #fff)',
                         borderBottom: '1px solid var(--ant-color-border-secondary, #f0f0f0)',
                         padding: isMobile ? '8px 12px' : '12px 24px',
@@ -1651,6 +1728,38 @@ export default function TicketDetailContent({
                                                     onClick={() => window.open(`/tickets/${displayTicket.id}/print`, '_blank')}
                                                 />
                                             </Tooltip>
+                                            {!displayTicket?.merged_into && (
+                                                <Tooltip title="Merge other tickets into this one">
+                                                    <Button icon={<MergeCellsOutlined />} onClick={() => setMergeOpen(true)}>
+                                                        Merge
+                                                    </Button>
+                                                </Tooltip>
+                                            )}
+                                            {displayTicket?.merged_into ? (
+                                                <Tooltip title={displayTicket.merged_into.title}>
+                                                    <Tag color="purple" style={{ margin: 0 }}>
+                                                        Part of{' '}
+                                                        <a href={`/tickets/${displayTicket.merged_into.id}`}>#{displayTicket.merged_into.id}</a>
+                                                    </Tag>
+                                                </Tooltip>
+                                            ) : null}
+                                            {(displayTicket?.merged_tickets?.length ?? 0) > 0 ? (
+                                                <Tag color="geekblue" style={{ margin: 0 }}>
+                                                    Merge:{' '}
+                                                    {(displayTicket.merged_tickets as { id: number; title: string }[]).map((m, i) => (
+                                                        <span key={m.id}>
+                                                            {i > 0 ? ', ' : ''}
+                                                            <a href={`/tickets/${m.id}`} title={m.title}>#{m.id}</a>
+                                                        </span>
+                                                    ))}
+                                                </Tag>
+                                            ) : null}
+                                            <MergeTicketModal
+                                                open={mergeOpen}
+                                                primaryId={displayTicket.id}
+                                                onClose={() => setMergeOpen(false)}
+                                                onMerged={() => window.location.reload()}
+                                            />
                                             {rowTicketType !== 'support' && (
                                                 <Tag color={rowTicketType === 'spam' ? 'red' : 'orange'}>
                                                     {rowTicketType === 'spam' ? 'Spam ticket' : 'Trash ticket'}
@@ -1693,6 +1802,15 @@ export default function TicketDetailContent({
                                                     onClick={() => void patchTicketClassification('support')}
                                                 >
                                                     Mark as support
+                                                </Button>
+                                            )}
+                                            {displayTicket?.source === 'freshdesk' && (currentUser as { role?: string }).role?.toLowerCase() !== 'customer' && (
+                                                <Button
+                                                    icon={<ReloadOutlined />}
+                                                    loading={resyncLoading}
+                                                    onClick={() => void resyncFromFreshdesk()}
+                                                >
+                                                    Resync FD
                                                 </Button>
                                             )}
                                         </div>
@@ -1816,6 +1934,8 @@ export default function TicketDetailContent({
                                             onDeleteComment={handleDeleteComment}
                                             canDeleteComment={canDeleteComment}
                                             onRemoveCommentAttachment={handleRemoveCommentAttachment}
+                                onAddCommentAttachments={handleAddCommentAttachments}
+                                addingCommentAttachmentId={addingCommentAttachmentId}
                                             removingCommentAttachmentKey={removingCommentAttachmentKey}
                                             onAddComment={handleAddComment}
                                             onAddChecklistItemsBulk={handleAddChecklistItemsBulk}

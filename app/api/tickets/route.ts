@@ -25,6 +25,7 @@ import {
 } from '@/lib/db'
 import { notifyTicketUsers } from '@/lib/firebase/ticket-notifications-server'
 import { sendRequesterTicketCreatedEmail } from '@/lib/requester-new-ticket-email'
+import { applyDefaultSkillsToTicket, setTicketSkills, validSkillIds } from '@/lib/skills'
 import { notifySlackTicketEvent } from '@/lib/slack-ticket-notify'
 import { getPublicUrl } from '@/lib/storage-idrive'
 import { logTicketActivity } from '@/lib/ticket-activity-log'
@@ -39,6 +40,7 @@ import {
   getContactCompanyIds,
   getEffectiveCompanyIdForUser,
 } from '@/lib/ticket-contact-user'
+import { getLastActivity } from '@/lib/ticket-last-activity'
 import { sendNewTicketAgentNotificationEmail } from '@/lib/ticket-notification-emails'
 import { assertCustomerMayUseTicketType } from '@/lib/ticket-type-customer-access'
 
@@ -224,6 +226,18 @@ export async function GET(request: Request) {
   if (noCompany) conditions.push(isNull(tickets.companyId))
   if (noTags) conditions.push(sql`${tickets.id} NOT IN (SELECT ticket_id FROM ticket_tags)`)
   if (noTeam) conditions.push(isNull(tickets.teamId))
+  // Board filters (staff only): tickets nobody is assigned to, or assigned to any of the given people.
+  if (!isCustomerList) {
+    if (url.searchParams.get('unassigned') === '1') {
+      conditions.push(sql`NOT EXISTS (SELECT 1 FROM ticket_assignees ta WHERE ta.ticket_id = ${tickets.id})`)
+    }
+    const assigneeIds = (url.searchParams.get('assignee_ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+    if (assigneeIds.length > 0) {
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM ticket_assignees ta WHERE ta.ticket_id = ${tickets.id} AND ta.user_id IN (${sql.join(assigneeIds.map((id) => sql`${id}`), sql`, `)}))`
+      )
+    }
+  }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
@@ -415,6 +429,11 @@ export async function GET(request: Request) {
     checklistByTicket[row.ticketId].items.push(row)
   })
 
+  // When a person last did something on the ticket (staff only; customers would see internal activity timing).
+  const lastActivity = isCustomerViewer
+    ? new Map<number, string>()
+    : await getLastActivity(ticketsRows.map((r) => ({ id: r.ticket.id, createdAt: r.ticket.createdAt })))
+
   const result = ticketsRows.map((r) => {
     const t = r.ticket
     const cl = checklistByTicket[t.id] || { completed: 0, total: 0, items: [] }
@@ -436,6 +455,7 @@ export async function GET(request: Request) {
       description: t.description,
       short_note: t.shortNote ?? null,
       created_by: t.createdBy,
+      merged_into_ticket_id: t.mergedIntoTicketId ?? null,
       contact_user_id: t.contactUserId ?? null,
       due_date: t.dueDate ? new Date(t.dueDate).toISOString() : null,
       status: t.status,
@@ -446,13 +466,14 @@ export async function GET(request: Request) {
       company_id: t.companyId,
       created_at: t.createdAt ? new Date(t.createdAt).toISOString() : '',
       updated_at: t.updatedAt ? new Date(t.updatedAt).toISOString() : '',
+      last_activity_at: lastActivity.get(t.id) ?? null,
       creator: r.creator
         ? { id: r.creator.id, full_name: r.creator.fullName, email: r.creator.email }
         : null,
       team: r.team ? { id: r.team.id, name: r.team.name } : null,
       type: r.type ? { id: r.type.id, title: r.type.title, slug: r.type.slug, color: r.type.color } : null,
       company: r.company
-        ? { id: r.company.id, name: r.company.name, color: r.company.color, email: r.company.email }
+        ? { id: r.company.id, name: r.company.name, color: r.company.color, email: r.company.email, display_order: r.company.displayOrder ?? null }
         : null,
       creator_name: creatorName,
       by_label: creatorName || companyName,
@@ -736,6 +757,20 @@ export async function POST(request: Request) {
         tagId,
       }))
     )
+  }
+
+  // Skills: the ones picked on the form, otherwise the company + ticket type defaults (pre-skills).
+  try {
+    // Skills are internal: only staff may pick them. Customer tickets always start from the defaults.
+    const creatorIsStaff = ['admin', 'manager', 'staff'].includes(String((authUser as { role?: string }).role ?? '').toLowerCase())
+    if (creatorIsStaff && Array.isArray(body.skill_ids)) {
+      const ids = await validSkillIds(body.skill_ids)
+      await setTicketSkills(ticket.id, ids, body.primary_skill_id)
+    } else {
+      await applyDefaultSkillsToTicket(ticket.id, ticket.companyId, ticket.typeId)
+    }
+  } catch (skillErr) {
+    console.error('Ticket skills error:', skillErr)
   }
 
   try {

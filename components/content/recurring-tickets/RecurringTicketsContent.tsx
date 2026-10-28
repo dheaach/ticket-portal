@@ -14,6 +14,7 @@ import {
 import {
   Button,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   Layout,
@@ -99,7 +100,7 @@ function freqLabel(row: RecurringTicketRow): string {
 }
 
 interface Props {
-  user: { id: string; email?: string | null; name?: string | null; role?: string }
+  user: { id: string; email?: string | null; name?: string | null; role?: string | null }
 }
 
 export default function RecurringTicketsContent({ user }: Props) {
@@ -110,6 +111,7 @@ export default function RecurringTicketsContent({ user }: Props) {
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
   const [filterCompany, setFilterCompany] = useState<string | undefined>(undefined)
   const [filterTitle, setFilterTitle] = useState('')
+  const [page, setPage] = useState({ current: 1, pageSize: 15 })
   const [runsDrawer, setRunsDrawer] = useState<RecurringTicketRow | null>(null)
   const [toggling, setToggling] = useState<string | null>(null)
   const [running, setRunning] = useState<string | null>(null)
@@ -172,13 +174,18 @@ export default function RecurringTicketsContent({ user }: Props) {
     })
   }
 
-  const handleRunNow = async (row: RecurringTicketRow) => {
+
+  const handleRunNow = async (row: RecurringTicketRow, mode: 'just_run' | 'advance') => {
     setRunning(row.id)
     try {
-      const res = await fetch(`/api/recurring-tickets/${row.id}/run-now`, { method: 'POST' })
+      const res = await fetch(`/api/recurring-tickets/${row.id}/run-now`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Failed')
-      messageApi.success(`Ticket created successfully`)
+      messageApi.success(mode === 'advance' ? 'Ticket created. The schedule moved to the following run.' : 'Ticket created. The schedule is unchanged.')
       fetchRules()
     } catch (e: unknown) {
       messageApi.error(e instanceof Error ? e.message : 'Failed to run')
@@ -284,14 +291,20 @@ export default function RecurringTicketsContent({ user }: Props) {
       key: 'actions',
       render: (_: unknown, row: RecurringTicketRow) => (
         <Space>
-          <Tooltip title="Run now — create ticket immediately">
-            <Button
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              loading={running === row.id}
-              onClick={() => handleRunNow(row)}
-            />
-          </Tooltip>
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                { key: 'just_run', label: 'Run now (schedule unchanged)' },
+                { key: 'advance', label: 'Run now and skip the next scheduled run' },
+              ],
+              onClick: ({ key }) => void handleRunNow(row, key as 'just_run' | 'advance'),
+            }}
+          >
+            <Tooltip title="Create the ticket now">
+              <Button type="primary" icon={<ThunderboltOutlined />} loading={running === row.id} />
+            </Tooltip>
+          </Dropdown>
           <Tooltip title="View run history">
             <Button
               icon={<EyeOutlined />}
@@ -333,7 +346,10 @@ export default function RecurringTicketsContent({ user }: Props) {
                 allowClear
                 style={{ width: 200 }}
                 value={filterTitle}
-                onChange={(e) => setFilterTitle(e.target.value)}
+                onChange={(e) => {
+                  setFilterTitle(e.target.value)
+                  setPage((p) => ({ ...p, current: 1 }))
+                }}
               />
               <Select
                 allowClear
@@ -341,7 +357,10 @@ export default function RecurringTicketsContent({ user }: Props) {
                 placeholder="Filter by company"
                 style={{ width: 200 }}
                 value={filterCompany}
-                onChange={setFilterCompany}
+                onChange={(v) => {
+                  setFilterCompany(v)
+                  setPage((p) => ({ ...p, current: 1 }))
+                }}
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                 }
@@ -368,7 +387,9 @@ export default function RecurringTicketsContent({ user }: Props) {
             rowKey="id"
             loading={loading}
             pagination={{
-              pageSize: 15,
+              current: page.current,
+              pageSize: page.pageSize,
+              onChange: (current, pageSize) => setPage({ current, pageSize }),
               showSizeChanger: true,
               pageSizeOptions: APP_TABLE_PAGE_SIZE_OPTIONS,
               showTotal: appTableShowTotal('rules'),
@@ -376,6 +397,7 @@ export default function RecurringTicketsContent({ user }: Props) {
             locale={{ emptyText: <Empty description="No recurring tickets yet" /> }}
           />
         </div>
+
 
         <Drawer
           open={!!runsDrawer}

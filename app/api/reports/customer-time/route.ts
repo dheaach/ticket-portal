@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { isAdminOrManager } from '@/lib/auth-utils'
+import { canViewCustomerReports } from '@/lib/auth-utils'
 import {
   companies,
   companyDailyActiveAssignments,
@@ -10,7 +10,9 @@ import {
   jobTypes,
   ticketPriorities,
   tickets,
+  ticketStatuses,
   ticketTimeTracker,
+  users,
 } from '@/lib/db'
 import { reportedDurationSeconds } from '@/lib/time-tracker-reported'
 
@@ -25,7 +27,9 @@ function makeCompanySummary(
   ticketCountByCompany: Map<string, number>,
   trackerSecondsByCompany: Map<string, number>,
   byCompanyJob: Map<string, Map<string, JobAggCell>>,
-  jobTitleBySlug: Map<string, string>
+  jobTitleBySlug: Map<string, string>,
+  lastByCompany: Map<string, { ticket: string | null; worked: string | null }> = new Map(),
+  byCompanyPosition: Map<string, Map<string, number>> = new Map()
 ) {
   return companyIds.map((id) => {
     const log = logAggMap.get(id) ?? { days: 0, hours: 0 }
@@ -59,9 +63,25 @@ function makeCompanySummary(
       avg_log_vs_tracker_percent: avgLogVsTrackerPct,
       avg_hours_per_log_day: avgHoursPerLogDay,
       by_job_type,
+      /** Newest ticket created for the company (any date, support tickets). */
+      by_position: [...(byCompanyPosition.get(id)?.entries() ?? [])]
+        .map(([position, seconds]) => ({ position, reported_seconds: seconds }))
+        .sort((a, b) => b.reported_seconds - a.reported_seconds),
+      last_ticket_at: lastByCompany.get(id)?.ticket ?? null,
+      /** Latest tracked work session on any of the company's tickets (any date). */
+      last_worked_at: lastByCompany.get(id)?.worked ?? null,
     }
   })
 }
+
+function toIso(v: unknown): string | null {
+  if (!v) return null
+  const d = v instanceof Date ? v : new Date(String(v))
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+/** "Extra time" work = tracker sessions whose job type slug is exactly `extra_time`. */
+const EXTRA_TIME_JOB_SLUG = 'extra_time'
 
 function sessionRole(session: { user?: { role?: string } } | null) {
   return (session?.user as { role?: string } | undefined)?.role
@@ -131,7 +151,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  if (!isAdminOrManager(sessionRole(session))) {
+  if (!canViewCustomerReports(sessionRole(session))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -152,6 +172,15 @@ export async function GET(request: Request) {
   }
 
   const companyById = new Map(companyRows.map((c) => [c.id, c]))
+  // Manual "Display order" first (1 = first), unnumbered companies after, then by name.
+  companyIds.sort((a, b) => {
+    const ca = companyById.get(a)
+    const cb = companyById.get(b)
+    const oa = ca?.displayOrder ?? Number.MAX_SAFE_INTEGER
+    const ob = cb?.displayOrder ?? Number.MAX_SAFE_INTEGER
+    if (oa !== ob) return oa - ob
+    return (ca?.name ?? '').localeCompare(cb?.name ?? '')
+  })
   const companiesPayload = companyIds
     .map((id) => {
       const row = companyById.get(id)
@@ -183,8 +212,8 @@ export async function GET(request: Request) {
         .filter(Boolean)
     : null
 
-  const startDate = startParam ? new Date(startParam) : null
-  const endDate = endParam ? new Date(endParam) : null
+  let startDate = startParam ? new Date(startParam) : null
+  let endDate = endParam ? new Date(endParam) : null
   if (startDate && Number.isNaN(startDate.getTime())) {
     return NextResponse.json({ error: 'Invalid start' }, { status: 400 })
   }
@@ -192,20 +221,36 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid end' }, { status: 400 })
   }
 
+  // When the calendar dates are sent (start_date / end_date, YYYY-MM-DD), the window is always the whole WIB days:
+  // from 00:00:00.000 of the first day to 23:59:59.999 of the last day, whatever time zone the browser is in.
+  const ymdOf = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null)
+  const wibMs = (ymd: string) => {
+    const [y, m, d] = ymd.split('-').map(Number)
+    return Date.UTC(y, m - 1, d) - 7 * 60 * 60 * 1000
+  }
+  const startYmd = ymdOf(url.searchParams.get('start_date'))
+  const endYmd = ymdOf(url.searchParams.get('end_date'))
+  if (startYmd) startDate = new Date(wibMs(startYmd))
+  if (endYmd) endDate = new Date(wibMs(endYmd) + 24 * 60 * 60 * 1000 - 1)
+
   const hasDateWindow = startDate != null || endDate != null
 
   const logConds = [
     inArray(companyDailyActiveAssignments.companyId, companyIds),
     sql`extract(dow from ${companyDailyActiveAssignments.snapshotDate}::date) not in (0, 6)`,
   ]
-  if (startDate) {
-    logConds.push(gte(companyDailyActiveAssignments.snapshotDate, startDate.toISOString().slice(0, 10)))
+  // Company-log days use the calendar dates the user picked (start_date / end_date). Falling back to the UTC date of
+  // the ISO bounds would move a local-midnight start back by a day.
+  const logStartYmd = startYmd ?? (startDate ? startDate.toISOString().slice(0, 10) : null)
+  const logEndYmd = endYmd ?? (endDate ? endDate.toISOString().slice(0, 10) : null)
+  if (logStartYmd) {
+    logConds.push(gte(companyDailyActiveAssignments.snapshotDate, logStartYmd))
   }
-  if (endDate) {
-    logConds.push(lte(companyDailyActiveAssignments.snapshotDate, endDate.toISOString().slice(0, 10)))
+  if (logEndYmd) {
+    logConds.push(lte(companyDailyActiveAssignments.snapshotDate, logEndYmd))
   }
 
-  const [logAggRows, jobTypeRows] = await Promise.all([
+  const [logAggRows, jobTypeRows, lastTicketRows, lastWorkedRows, statusRows] = await Promise.all([
     db
       .select({
         companyId: companyDailyActiveAssignments.companyId,
@@ -216,7 +261,33 @@ export async function GET(request: Request) {
       .where(and(...logConds))
       .groupBy(companyDailyActiveAssignments.companyId),
     db.select({ slug: jobTypes.slug, title: jobTypes.title }).from(jobTypes),
+    db
+      .select({ companyId: tickets.companyId, last: sql<string | null>`max(${tickets.createdAt})` })
+      .from(tickets)
+      .where(and(inArray(tickets.companyId, companyIds), eq(tickets.ticketType, 'support')))
+      .groupBy(tickets.companyId),
+    db
+      .select({
+        companyId: tickets.companyId,
+        last: sql<string | null>`max(coalesce(${ticketTimeTracker.stopTime}, ${ticketTimeTracker.startTime}))`,
+      })
+      .from(ticketTimeTracker)
+      .innerJoin(tickets, eq(ticketTimeTracker.ticketId, tickets.id))
+      .where(and(inArray(tickets.companyId, companyIds), eq(tickets.ticketType, 'support')))
+      .groupBy(tickets.companyId),
+    db.select({ slug: ticketStatuses.slug, title: ticketStatuses.title }).from(ticketStatuses),
   ])
+  const statusTitleBySlug = new Map(statusRows.map((r) => [r.slug.toLowerCase(), r.title]))
+  const lastByCompany = new Map<string, { ticket: string | null; worked: string | null }>()
+  for (const r of lastTicketRows) {
+    if (r.companyId) lastByCompany.set(r.companyId, { ticket: toIso(r.last), worked: null })
+  }
+  for (const r of lastWorkedRows) {
+    if (!r.companyId) continue
+    const cur = lastByCompany.get(r.companyId) ?? { ticket: null, worked: null }
+    cur.worked = toIso(r.last)
+    lastByCompany.set(r.companyId, cur)
+  }
 
   const logAggMap = new Map<string, { days: number; hours: number }>()
   for (const lr of logAggRows) {
@@ -249,8 +320,10 @@ export async function GET(request: Request) {
       new Map<string, number>(),
       new Map<string, number>(),
       new Map<string, Map<string, JobAggCell>>(),
-      jobTitleBySlug
+      jobTitleBySlug,
+      lastByCompany
     ),
+    extra_time_sessions: [],
   })
 
   const baseParts = ticketFilterParts(companyIds, statusSlugs, urgentOnly, urgentPriorityValue)
@@ -298,6 +371,12 @@ export async function GET(request: Request) {
     .innerJoin(tickets, eq(ticketTimeTracker.ticketId, tickets.id))
     .where(and(...aggConds))
 
+  const positionRows = await db
+    .select({ id: users.id, position: users.position })
+    .from(users)
+    .where(inArray(users.id, [...new Set(rows.map((r) => r.tracker.userId))]))
+  const positionByUser = new Map(positionRows.map((u) => [u.id, u.position?.trim() || 'Unspecified']))
+  const byCompanyPosition = new Map<string, Map<string, number>>()
   const secondsByTicket = new Map<number, number>()
   const trackerSecondsByCompany = new Map<string, number>()
   const byCompanyJob = new Map<string, Map<string, JobAggCell>>()
@@ -313,6 +392,10 @@ export async function GET(request: Request) {
     const cid = r.ticket.companyId
     if (cid) {
       trackerSecondsByCompany.set(cid, (trackerSecondsByCompany.get(cid) ?? 0) + sec)
+      const pos = positionByUser.get(r.tracker.userId) ?? 'Unspecified'
+      if (!byCompanyPosition.has(cid)) byCompanyPosition.set(cid, new Map())
+      const pm = byCompanyPosition.get(cid)!
+      pm.set(pos, (pm.get(pos) ?? 0) + sec)
       const slug = r.tracker.jobType ?? ''
       if (!byCompanyJob.has(cid)) byCompanyJob.set(cid, new Map())
       const jm = byCompanyJob.get(cid)!
@@ -377,6 +460,7 @@ export async function GET(request: Request) {
       id,
       title: v.title,
       status: v.status,
+      status_title: statusTitleBySlug.get((v.status ?? '').toLowerCase()) ?? v.status,
       company_id: v.companyId,
       company_name: v.companyName,
       reported_seconds: secondsByTicket.get(id) ?? 0,
@@ -392,6 +476,34 @@ export async function GET(request: Request) {
     if (b.reported_seconds !== a.reported_seconds) return b.reported_seconds - a.reported_seconds
     return b.id - a.id
   })
+
+  const extraRows = rows.filter((r) => r.tracker.jobType === EXTRA_TIME_JOB_SLUG)
+  const extraUserIds = [...new Set(extraRows.map((r) => r.tracker.userId))]
+  const extraUsers = extraUserIds.length
+    ? await db
+        .select({ id: users.id, fullName: users.fullName, email: users.email })
+        .from(users)
+        .where(inArray(users.id, extraUserIds))
+    : []
+  const userNameById = new Map(extraUsers.map((u) => [u.id, u.fullName || u.email]))
+  const extraTimeSessions = extraRows
+    .map((r) => ({
+      id: r.tracker.id,
+      ticket_id: r.ticket.id,
+      ticket_title: r.ticket.title,
+      company_id: r.ticket.companyId,
+      company_name: r.ticket.companyId ? companyById.get(r.ticket.companyId)?.name ?? null : null,
+      user_name: userNameById.get(r.tracker.userId) ?? null,
+      start_time: toIso(r.tracker.startTime),
+      stop_time: toIso(r.tracker.stopTime),
+      reported_seconds: reportedDurationSeconds({
+        durationSeconds: r.tracker.durationSeconds,
+        durationAdjustment: r.tracker.durationAdjustment,
+      }),
+      note: r.tracker.note ?? null,
+    }))
+    .sort((a, b) => (b.start_time ?? '').localeCompare(a.start_time ?? ''))
+    .slice(0, 500)
 
   return NextResponse.json({
     companies: companiesPayload,
@@ -418,7 +530,10 @@ export async function GET(request: Request) {
       ticketCountByCompany,
       trackerSecondsByCompany,
       byCompanyJob,
-      jobTitleBySlug
+      jobTitleBySlug,
+      lastByCompany,
+      byCompanyPosition
     ),
+    extra_time_sessions: extraTimeSessions,
   })
 }

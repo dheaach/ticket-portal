@@ -61,6 +61,8 @@ interface KanbanCardProps {
   onFilterByCompany?: (companyId: string) => void
   allStatusColumns?: StatusColumn[]
   trackerStat?: TicketTrackerStat
+  /** Extra content shown at the bottom inside the card (used by Team Pool). */
+  footer?: ReactNode
 }
 
 export default function KanbanCard({
@@ -76,6 +78,7 @@ export default function KanbanCard({
   onFilterByCompany,
   allStatusColumns,
   trackerStat,
+  footer,
 }: KanbanCardProps) {
   const statusCols = allStatusColumns?.length ? allStatusColumns : DEFAULT_ALL_STATUS_COLUMNS
   const statusCol = statusCols.find((c) => c.id === ticket.status)
@@ -246,14 +249,10 @@ export default function KanbanCard({
         {/* Title + subtitle - use <a> for native right-click "Open in new tab" */}
         <a
           href={`/tickets/${ticket.id}`}
+          target={isCustomer ? undefined : '_blank'}
+          rel={isCustomer ? undefined : 'noopener noreferrer'}
           style={{ cursor: 'pointer', display: 'block', color: 'inherit', textDecoration: 'none' }}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (e.button !== 0) return
-            if (e.ctrlKey || e.metaKey) return
-            e.preventDefault()
-            router.push(`/tickets/${ticket.id}`)
-          }}
+          onClick={(e) => e.stopPropagation()}
         >
           <Text strong style={{ fontSize: 14, color: 'var(--kanban-card-title)', lineHeight: 1.4, display: 'block' }}>
             {ticket.has_unread_replies && (
@@ -311,6 +310,7 @@ export default function KanbanCard({
                 <span>Last update <DateDisplay date={ticket.updated_at} format="date-only" /></span>
               </Flex>
             )}
+            {!isCustomer && (
             <Tooltip title={<TrackerTooltipContent stat={trackerStat} />} placement="top" mouseEnterDelay={0.2}>
               <Flex align="center" gap={4} style={{ fontSize: 11, color: 'var(--kanban-card-muted)', cursor: 'default' }}>
                 <FieldTimeOutlined />
@@ -320,6 +320,7 @@ export default function KanbanCard({
                 )}
               </Flex>
             </Tooltip>
+            )}
             {ticket.has_unread_replies && (
               <Tooltip title="Unread replies">
                 <CommentOutlined style={{ color: 'var(--kanban-card-muted)', fontSize: 12 }} />
@@ -337,6 +338,14 @@ export default function KanbanCard({
           )}
         </Flex>
 
+        {footer ? (
+          <div
+            style={{ marginTop: 10 }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {footer}
+          </div>
+        ) : null}
       </Card>
     </div>
   )

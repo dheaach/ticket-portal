@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { formatFromHeader, getAppSettings } from '@/lib/app-settings'
 import { getExtraCompanies } from '@/lib/customer-company'
-import { companies, companyUsers, db, emailIntegrations, messageTemplates, users } from '@/lib/db'
+import { companies, companyUsers, db, emailIntegrations, messageTemplates, shifts, users } from '@/lib/db'
 import { mergeMessageTemplateHtml, userRowToMergeMap } from '@/lib/message-template-merge'
 import {
   actorRoleFromSession,
@@ -16,6 +16,8 @@ import {
   userRowToLogSnapshot,
 } from '@/lib/system-activity-log'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
+import { isValidYmd, syncUserCapacityFromToday } from '@/lib/user-capacity'
+import { logUserCompanyChange } from '@/lib/user-company'
 
 function encodeSubjectHeader(subject: string): string {
   if (/^[\x01-\x7F]*$/.test(subject)) return subject
@@ -320,6 +322,9 @@ export async function GET(
     bio: u.bio,
     timezone: u.timezone,
     locale: u.locale,
+    joined_at: u.joinedAt ?? null,
+    left_at: u.leftAt ?? null,
+    shift_id: u.shiftId ?? null,
     is_email_verified: u.isEmailVerified,
   })
 }
@@ -434,6 +439,28 @@ export async function PATCH(
   if (body.position !== undefined) updateData.position = body.position || null
   if (body.bio !== undefined) updateData.bio = body.bio || null
   if (body.timezone !== undefined) updateData.timezone = body.timezone || 'UTC'
+  // First / last working day (WIB date) — admin only; drives team capacity.
+  let capacityDatesChanged = false
+  if (isAdmin) {
+    for (const [key, col] of [['joined_at', 'joinedAt'], ['left_at', 'leftAt']] as const) {
+      if (body[key] === undefined) continue
+      const v = body[key] ? String(body[key]).slice(0, 10) : null
+      if (v !== null && !isValidYmd(v)) {
+        return NextResponse.json({ error: `${key} must be YYYY-MM-DD` }, { status: 400 })
+      }
+      updateData[col] = v
+      capacityDatesChanged = true
+    }
+  }
+  // Shift (admin only): must be a shift from the catalog, or empty for none.
+  if (isAdmin && body.shift_id !== undefined) {
+    const sid = body.shift_id ? String(body.shift_id) : null
+    if (sid) {
+      const [exists] = await db.select({ id: shifts.id }).from(shifts).where(eq(shifts.id, sid)).limit(1)
+      if (!exists) return NextResponse.json({ error: 'Shift not found' }, { status: 400 })
+    }
+    updateData.shiftId = sid
+  }
   if (body.locale !== undefined) updateData.locale = body.locale || 'en'
   if (body.is_email_verified !== undefined) updateData.isEmailVerified = body.is_email_verified
 
@@ -447,6 +474,16 @@ export async function PATCH(
 
   const passwordChanged = Boolean(isAdmin && body.password)
   await db.update(users).set({ ...updateData, updatedAt: new Date() }).where(eq(users.id, id))
+  if ('companyId' in updateData) {
+    await logUserCompanyChange({ userId: id, from: targetUser.companyId ?? null, to: (updateData.companyId as string | null) ?? null, source: 'admin_edit', actorUserId: session.user?.id ?? null })
+  }
+  if (capacityDatesChanged || body.status !== undefined || body.role !== undefined) {
+    try {
+      await syncUserCapacityFromToday(id)
+    } catch (e) {
+      console.error('[users PATCH] capacity sync failed (is migration 072 applied?):', e)
+    }
+  }
   if (removingFromCompany) {
     await db.delete(companyUsers).where(eq(companyUsers.userId, id))
   }

@@ -296,7 +296,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                 title="Time today"
                 value={formatTime(trackerStats.todaySeconds)}
                 prefix={<ClockCircleOutlined />}
-                styles={{ content: { color: '#16324A', fontSize: 18 } }}
+                styles={{ content: { color: '#1890ff', fontSize: 18 } }}
               />
               <Text type="secondary" style={{ fontSize: 12 }}>
                 Tickets: {trackerStats.todayTickets}
@@ -342,6 +342,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
         </Row>
 
         <DashboardHourlyActivityCard
+          timezone={timeSummary?.data.timezone}
           stoppedSessions={allSessionsForStats}
           activeSessions={activeTrackers.map((t) => ({
             ticket_id: t.ticket_id,
@@ -386,7 +387,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                         <br />
                         <Text
                           strong
-                          style={{ cursor: 'pointer', color: '#16324A' }}
+                          style={{ cursor: 'pointer', color: '#1890ff' }}
                           onClick={() => router.push(`/tickets/${row.ticket_id}`)}
                         >
                           {row.ticket ? `#${row.ticket_id} ${row.ticket.title}` : `#${row.ticket_id}`}
@@ -458,7 +459,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                             <Link
                               href={`/tickets/${item.ticket_id}`}
                               onClick={(e) => e.stopPropagation()}
-                              style={{ color: '#16324A', fontWeight: 600 }}
+                              style={{ color: '#1890ff', fontWeight: 600 }}
                             >
                               {item.ticket ? `#${item.ticket_id} ${item.ticket.title}` : `#${item.ticket_id}`}
                             </Link>

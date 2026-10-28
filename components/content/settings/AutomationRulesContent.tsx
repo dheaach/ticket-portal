@@ -1,6 +1,6 @@
 'use client'
 
-import { DeleteOutlined, EditOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import {
   Button,
   Card,
@@ -23,6 +23,7 @@ import { useEffect,useState } from 'react'
 
 import ActionBuilder from '@/components/automation/ActionBuilder'
 import ConditionBuilder from '@/components/automation/ConditionBuilder'
+import RuleTestPanel from '@/components/automation/RuleTestPanel'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
@@ -78,6 +79,7 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
   const [filterCompany, setFilterCompany] = useState<string | null>(null)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingRule, setEditingRule] = useState<AutomationRuleRecord | null>(null)
+  const [testRule, setTestRule] = useState<AutomationRuleRecord | null>(null)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
 
@@ -242,9 +244,12 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
     {
       title: 'Actions',
       key: 'actions',
-      width: 200,
+      width: 280,
       render: (_, record) => (
         <Space>
+          <Button icon={<ExperimentOutlined />} onClick={() => setTestRule(record)}>
+            Test
+          </Button>
           <Button type="primary" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
             Edit
           </Button>
@@ -313,12 +318,33 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
                 return true
               })}
               pagination={{
-                pageSize: 15,
+                defaultPageSize: 15,
                 showSizeChanger: true,
                 pageSizeOptions: APP_TABLE_PAGE_SIZE_OPTIONS,
                 showTotal: appTableShowTotal('rules'),
               }}
             />
+
+          <Modal
+            title={testRule ? `Test rule: ${testRule.name || `#${testRule.id}`}` : 'Test rule'}
+            open={!!testRule}
+            onCancel={() => setTestRule(null)}
+            footer={null}
+            width={720}
+            destroyOnHidden
+          >
+            {testRule ? (
+              <RuleTestPanel
+                bare
+                getRule={() => ({
+                  event_type: testRule.event_type,
+                  conditions: testRule.conditions,
+                  actions: testRule.actions,
+                  company_id: testRule.company_id,
+                })}
+              />
+            ) : null}
+          </Modal>
 
           <Modal
             title={editingRule ? 'Edit Rule' : 'Add Rule'}
@@ -406,6 +432,13 @@ export default function AutomationRulesContent({ user: currentUser }: Automation
               >
                 <ActionBuilder />
               </Form.Item>
+
+              <RuleTestPanel
+                getRule={() => {
+                  const v = form.getFieldsValue()
+                  return { event_type: v.event_type, conditions: v.conditions, actions: v.actions, company_id: v.company_id || null }
+                }}
+              />
 
               <Form.Item>
                 <Space>

@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  BarChartOutlined,
   CheckSquareOutlined,
   DashboardOutlined,
   DeleteOutlined,
@@ -21,6 +22,7 @@ import { shouldOpenHrefInNewTab,SpaNavLink } from '@/components/common/SpaNavLin
 import {
   canAccessMyTeams,
   canAccessSettingsHub,
+  canAccessTeams,
   canAccessTickets,
   isSettingsHrefPathname,
 } from '@/lib/auth-utils'
@@ -58,7 +60,8 @@ function selectedKeysForPathname(pathname: string | null, ticketsSearch: string)
   if (pathname === '/reference' || pathname.startsWith('/reference/')) return ['/reference']
   if (pathname === '/projects' || pathname.startsWith('/projects/')) return ['/projects']
   if (isSettingsHrefPathname(pathname)) return ['/settings']
-  const topLevel = ['/dashboard', '/my-teams']
+  if (pathname === '/team-pool' || pathname.startsWith('/team-pool/')) return ['/team-pool']
+  const topLevel = ['/dashboard', '/my-teams', '/team-report']
   const top = topLevel.find((k) => pathname === k || (k !== '/dashboard' && pathname.startsWith(`${k}/`)))
   if (top) return [top]
   const ticketsDetail = pathname.startsWith('/tickets/')
@@ -125,6 +128,15 @@ export default function AdminSidebar({ user, collapsed, onCollapse }: AdminSideb
                   icon: <CheckSquareOutlined />,
                   label: linkLabel('/tickets', 'All tickets'),
                 },
+                ...(role === 'admin'
+                  ? [
+                      {
+                        key: '/team-pool',
+                        icon: <TeamOutlined />,
+                        label: linkLabel('/team-pool', 'Team Pool'),
+                      },
+                    ]
+                  : []),
                 {
                   key: '/tickets?ticket_type=spam',
                   icon: <WarningOutlined />,
@@ -150,6 +162,15 @@ export default function AdminSidebar({ user, collapsed, onCollapse }: AdminSideb
                 },
               ]
             : []),
+          ...(canAccessTeams(role)
+            ? [
+                {
+                  key: '/team-report',
+                  icon: <BarChartOutlined />,
+                  label: linkLabel('/team-report', 'Team Report'),
+                },
+              ]
+            : []),
         ]
       : []),
     ...(canAccessSettingsHub(role)
@@ -165,7 +186,7 @@ export default function AdminSidebar({ user, collapsed, onCollapse }: AdminSideb
     if (isCustomer) {
       return item.key !== '/settings'
     }
-    const ticketMenuKeys = ['/tickets', '/tickets?ticket_type=spam', '/tickets?ticket_type=trash']
+    const ticketMenuKeys = ['/tickets', '/team-pool', '/tickets?ticket_type=spam', '/tickets?ticket_type=trash']
     if (ticketMenuKeys.includes(item.key as string) && !canAccessTickets(role)) return false
     if (item.key === '/settings' && !canAccessSettingsHub(role)) return false
     return true

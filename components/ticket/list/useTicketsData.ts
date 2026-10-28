@@ -45,8 +45,8 @@ export type TicketsDragEndHandler = (event: DragEndEvent) => Promise<void>
 const FILTER_STORAGE_KEY = 'deskteam-tickets-filter'
 const LIST_PAGE_SIZE_KEY = 'tickets_list_page_size'
 const LIST_SORT_KEY = 'tickets_list_sort'
-const DEFAULT_LIST_PAGE_SIZE = 15
-const LIST_PAGE_SIZES = [10, 15, 20, 50]
+const DEFAULT_LIST_PAGE_SIZE = 200
+const LIST_PAGE_SIZES = [10, 15, 20, 50, 100, 200]
 const SORT_FIELDS: TicketSortField[] = ['id', 'title', 'priority', 'due_date', 'updated_at', 'created_at', 'company', 'status', 'type', 'team']
 
 function readStoredListPageSize(): number {
@@ -83,6 +83,8 @@ interface StoredFilter {
   filterSidebarCollapsed?: boolean
   /** Number of tickets fetched per list request (50 / 100 / 200). */
   ticketsPageLimit?: number | null
+  /** 2 = the saved limit was chosen after the default became 200; older saves (default 50) are ignored once. */
+  ticketsPageLimitV?: number | null
 }
 
 function loadFiltersFromStorage(): StoredFilter | null {
@@ -268,7 +270,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
   const prevTicketsListSearchRef = useRef<string | null>(null)
 
   const [collapsed, setCollapsed] = useState(true)
-  const [ticketsPageLimit, setTicketsPageLimitState] = useState<TicketsPageLimit>(isCustomer ? 200 : 50)
+  const [ticketsPageLimit, setTicketsPageLimitState] = useState<TicketsPageLimit>(200)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingTicket, setEditingTicket] = useState<TicketRecord | null>(null)
   const [form] = Form.useForm()
@@ -460,6 +462,8 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
   }, [])
 
   const ticketsListQueryKeyRef = useRef(ticketsListQueryKey)
+  /** The filters of the list on screen (without paging), so "select all" selects exactly what is filtered. */
+  const lastBaseParamsRef = useRef('')
   ticketsListQueryKeyRef.current = ticketsListQueryKey
 
   const ticketsQuery = useQuery({
@@ -511,6 +515,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
         params.set('search', debouncedSearch.trim())
         params.set('search_fields', searchFields || 'title,description')
       }
+      lastBaseParamsRef.current = params.toString()
       if (isPagedView) {
         params.set('paginated', '1')
         params.set('limit', String(listPageSize))
@@ -578,7 +583,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     applySearch(state.filterSearch)
     setFilterSidebarCollapsed(state.filterSidebarCollapsed)
     setViewMode(vm)
-    setTicketsPageLimitState(normalizeTicketsPageLimit(stored.ticketsPageLimit))
+    setTicketsPageLimitState(stored.ticketsPageLimitV === 2 ? normalizeTicketsPageLimit(stored.ticketsPageLimit) : 200)
     try {
       const savedPrefs = localStorage.getItem('ticket-search-prefs')
       if (savedPrefs) {
@@ -881,6 +886,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       viewMode: viewMode,
       filterSidebarCollapsed: filterSidebarCollapsed,
       ticketsPageLimit,
+      ticketsPageLimitV: 2,
     })
 
     if (applyingFromUrlRef.current) {
@@ -976,9 +982,10 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     if (
       !isCustomer &&
       (filterTicketType === 'spam' || filterTicketType === 'trash') &&
-      viewMode !== 'card'
+      viewMode !== 'list'
     ) {
-      setViewMode('card')
+      // The List view has row selection (bulk actions and select all); the card view does not.
+      setViewMode('list')
     }
   }, [filterTicketType, viewMode, isCustomer])
 
@@ -1134,24 +1141,54 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     }
   }
 
+  /** One request for all tickets (Spam to Trash, or any list to Trash). */
   const handleBulkMoveToTrash = async (ids: number[]) => {
     if (!ids.length || isCustomer || !canDeleteTicket) return
     try {
-      await Promise.all(
-        ids.map((id) =>
-          apiFetch(`/api/tickets/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticket_type: 'trash' }),
-          })
-        )
-      )
-      message.success(`Moved ${ids.length} ticket(s) to trash`)
-      await queryClient.invalidateQueries({ queryKey: ticketsListQueryKeyPrefix() })
+      const res = await apiFetch<{ moved?: number }>('/api/tickets/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'move_to_trash', ids }),
+      })
+      message.success(`Moved ${res.moved ?? ids.length} ticket(s) to trash`)
     } catch (error: unknown) {
       message.error((error as Error).message || 'Failed to move tickets to trash')
+    } finally {
       await queryClient.invalidateQueries({ queryKey: ticketsListQueryKeyPrefix() })
     }
+  }
+
+  /** Trash only, admin only: removes the tickets and everything attached to them for good. */
+  const handleBulkDeletePermanently = async (ids: number[]) => {
+    if (!ids.length || isCustomer) return
+    try {
+      const res = await apiFetch<{ deleted?: number; skipped?: number }>('/api/tickets/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_permanently', ids }),
+      })
+      message.success(`Deleted ${res.deleted ?? 0} ticket(s) permanently${res.skipped ? `. ${res.skipped} skipped (not in Trash).` : ''}`)
+    } catch (error: unknown) {
+      message.error((error as Error).message || 'Failed to delete tickets')
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ticketsListQueryKeyPrefix() })
+    }
+  }
+
+  /** Ids of every ticket in the current list (same filters, all pages), at most 500. */
+  const fetchAllIdsInCurrentList = async (): Promise<number[]> => {
+    const base = new URLSearchParams(lastBaseParamsRef.current)
+    base.set('paginated', '1')
+    base.set('limit', '200')
+    const out: number[] = []
+    for (let offset = 0; offset < 500; offset += 200) {
+      base.set('offset', String(offset))
+      const res = await apiFetch<{ data: TicketRecord[]; total: number }>(`/api/tickets?${base.toString()}`)
+      const rows = Array.isArray(res.data) ? res.data : []
+      out.push(...rows.map((t) => t.id))
+      if (rows.length < 200 || out.length >= (res.total ?? 0)) break
+    }
+    return out.slice(0, 500)
   }
 
   const handleBulkMoveToSpam = async (ids: number[]) => {
@@ -1293,6 +1330,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
           visibility: 'public',
           description: values.description || null,
           tag_ids: selectedTagIds,
+          ...(Array.isArray(values.skill_ids) ? { skill_ids: values.skill_ids, primary_skill_id: values.primary_skill_id ?? null } : {}),
           contact_user_id: effectiveValues.contact_user_id ?? null,
           attachments: newTicketAttachments.map((a) => ({
             file_url: a.url,
@@ -1354,6 +1392,9 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
           newRecord,
           ...(prev ?? []),
         ])
+        // The server renumbers the company queue when a ticket is added, so the priority of this ticket and of the
+        // others changes. Reload the list in the background so everyone sees the real numbers without refreshing.
+        void queryClient.invalidateQueries({ queryKey: ticketsListQueryKeyPrefix() })
       }
 
       setModalVisible(false)
@@ -1446,6 +1487,8 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     handleDelete,
     handleBulkMoveToTrash,
     handleBulkMoveToSpam,
+    handleBulkDeletePermanently,
+    fetchAllIdsInCurrentList,
     handleSubmit,
     handleModalCancel,
     handleDragStart,

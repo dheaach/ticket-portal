@@ -2,15 +2,22 @@ import { and, desc, eq, inArray, isNotNull, max } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { canEditCompanies } from '@/lib/auth-utils'
 import { companies, companyUsers, db, teams, tickets, users } from '@/lib/db'
 import { revalidateTicketsLookupCatalog } from '@/lib/tickets-lookup-catalog-cache'
 import { upsertCompanyUserMembership } from '@/lib/upsert-company-user-membership'
+import { logUserCompanyChange } from '@/lib/user-company'
 
 function normalizeUuidBody(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null
   if (typeof v !== 'string') return null
   return v
+}
+
+function parseDisplayOrder(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = typeof v === 'number' ? v : Number(v)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(100000, Math.floor(n)))
 }
 
 function parseActiveTime(v: unknown): number {
@@ -27,6 +34,8 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url)
   const isActiveParam = url.searchParams.get('is_active')
+  // Inactive companies disappear from every picker and filter; only Company management asks for them.
+  const includeInactive = url.searchParams.get('include_inactive') === '1'
 
   const [rows, ticketActivity] = await Promise.all([
     db.select().from(companies).orderBy(desc(companies.createdAt)),
@@ -73,6 +82,8 @@ export async function GET(request: Request) {
   if (isActiveParam !== null && isActiveParam !== undefined) {
     const active = isActiveParam === 'true'
     filtered = rows.filter((r) => r.isActive === active)
+  } else if (!includeInactive) {
+    filtered = rows.filter((r) => r.isActive !== false)
   }
 
   const data = filtered.map((r) => ({
@@ -85,6 +96,7 @@ export async function GET(request: Request) {
     active_team_id: r.activeTeamId ?? null,
     active_manager_id: r.activeManagerId ?? null,
     active_time: r.activeTime ?? 0,
+    display_order: r.displayOrder ?? null,
     is_customer: r.isCustomer ?? false,
     created_at: r.createdAt ? new Date(r.createdAt).toISOString() : '',
     updated_at: r.updatedAt ? new Date(r.updatedAt).toISOString() : '',
@@ -101,16 +113,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const role = (session.user as { role?: string }).role
-  if (!canEditCompanies(role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
   const body = await request.json()
   const { name, email, is_active, color, leader_user_id } = body
   const activeTeamId = normalizeUuidBody(body.active_team_id)
   const activeManagerId = normalizeUuidBody(body.active_manager_id)
   const activeTime = parseActiveTime(body.active_time)
+  const displayOrder = parseDisplayOrder(body.display_order)
   const isCustomerCompany = body.is_customer === true
 
   if (!name) {
@@ -164,6 +172,7 @@ export async function POST(request: Request) {
       activeTeamId,
       activeManagerId,
       activeTime,
+      displayOrder,
       isCustomer: isCustomerCompany,
     })
     .returning()
@@ -173,10 +182,12 @@ export async function POST(request: Request) {
   }
 
   if (leader_user_id) {
+    const [prevLeader] = await db.select({ companyId: users.companyId }).from(users).where(eq(users.id, leader_user_id)).limit(1)
     await db
       .update(users)
       .set({ companyId: row.id, updatedAt: new Date() })
       .where(eq(users.id, leader_user_id))
+    await logUserCompanyChange({ userId: leader_user_id, from: prevLeader?.companyId ?? null, to: row.id, source: 'company_leader', actorUserId: session.user.id })
     await upsertCompanyUserMembership({
       companyId: row.id,
       userId: leader_user_id,
@@ -197,6 +208,7 @@ export async function POST(request: Request) {
         active_team_id: row.activeTeamId ?? null,
         active_manager_id: row.activeManagerId ?? null,
         active_time: row.activeTime ?? 0,
+        display_order: row.displayOrder ?? null,
         is_customer: row.isCustomer ?? false,
         created_at: row.createdAt ? new Date(row.createdAt).toISOString() : '',
         updated_at: row.updatedAt ? new Date(row.updatedAt).toISOString() : '',

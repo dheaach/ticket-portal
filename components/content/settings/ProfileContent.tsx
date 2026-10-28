@@ -8,6 +8,8 @@ import { useEffect,useState } from 'react'
 
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
+import MyTeamReportCard from '@/components/profile/MyTeamReportCard'
+import { canViewCustomerReports } from '@/lib/auth-utils'
 import { USER_DEPARTMENTS, USER_POSITIONS } from '@/lib/user-work-dropdowns'
 import { uploadAvatar } from '@/utils/storage'
 
@@ -37,6 +39,7 @@ interface ProfileContentProps {
     bio?: string | null
     timezone?: string
     locale?: string
+    default_job_type?: string | null
   }
 }
 
@@ -62,6 +65,14 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
   const [loadingTokens, setLoadingTokens] = useState(false)
   const [generatingToken, setGeneratingToken] = useState(false)
   const [newToken, setNewToken] = useState<string | null>(null)
+  const [jobTypeOptions, setJobTypeOptions] = useState<{ slug: string; title: string }[]>([])
+
+  useEffect(() => {
+    fetch('/api/job-types', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setJobTypeOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setJobTypeOptions([]))
+  }, [])
 
   useEffect(() => {
     if (userData) {
@@ -76,6 +87,7 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
         bio: userData.bio || '',
         timezone: userData.timezone || 'UTC',
         locale: userData.locale || 'en',
+        default_job_type: userData.default_job_type || undefined,
       })
       setAvatarUrl(userData.avatar_url || user.user_metadata?.avatar_url || null)
     }
@@ -180,6 +192,7 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
     bio?: string
     timezone?: string
     locale?: string
+    default_job_type?: string
   }) => {
     setLoading(true)
     try {
@@ -197,6 +210,7 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
           bio: values.bio,
           timezone: values.timezone || 'UTC',
           locale: values.locale || 'en',
+          default_job_type: values.default_job_type || null,
         }),
       })
       const data = await res.json()
@@ -417,6 +431,19 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
                     </Select>
                   </Form.Item>
                 </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="default_job_type"
+                    label="Default job type (Time Tracker)"
+                    extra="Preselected when you start a timer on a ticket."
+                  >
+                    <Select
+                      allowClear
+                      placeholder="Other"
+                      options={jobTypeOptions.map((o) => ({ value: o.slug, label: o.title }))}
+                    />
+                  </Form.Item>
+                </Col>
               </Row>
 
               <Form.Item
@@ -438,6 +465,8 @@ export default function ProfileContent({ user, userData }: ProfileContentProps) 
               </Form.Item>
             </Form>
           </Card>
+
+          {canViewCustomerReports((clientSession?.user as { role?: string } | undefined)?.role) ? <MyTeamReportCard /> : null}
 
           <Card style={{ marginTop: 24 }}>
             <Title level={3}>

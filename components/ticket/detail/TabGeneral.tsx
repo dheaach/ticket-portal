@@ -43,6 +43,11 @@ import {
   Typography,
 } from 'antd'
 
+import AssigneeSuggestions from '@/components/skills/AssigneeSuggestions'
+import TicketSkillsField from '@/components/skills/TicketSkillsField'
+import SplitCommentButton from '@/components/ticket/detail/SplitCommentButton'
+import { attachmentDownloadHref } from '@/lib/attachment-download-url'
+
 const { useBreakpoint } = Grid
 import dayjs from 'dayjs'
 import React, { useEffect, useMemo, useState } from 'react'
@@ -119,6 +124,8 @@ interface Comment {
   created_at: string
   visibility?: 'note' | 'reply'
   author_type?: 'customer' | 'agent' | 'automation'
+  /** Set when this reply was split into its own ticket. */
+  split_to_ticket_id?: number | null
   user?: { id: string; full_name: string | null; email: string; avatar_url?: string | null }
   comment_attachments?: CommentAttachment[] | null
   tagged_user_ids?: string[]
@@ -251,6 +258,8 @@ interface TabGeneralProps {
   canDeleteComment: (createdAt: string) => boolean
   onRemoveCommentAttachment: (commentId: string, attachmentId: string) => void | Promise<void>
   removingCommentAttachmentKey?: string | null
+  onAddCommentAttachments?: (commentId: string, files: File[]) => void | Promise<void>
+  addingCommentAttachmentId?: string | null
   onAddComment: (
     commentText: string,
     attachments: { url: string; file_name: string; file_path: string }[],
@@ -336,6 +345,8 @@ export default function TabGeneral({
   canDeleteComment,
   onRemoveCommentAttachment,
   removingCommentAttachmentKey = null,
+  onAddCommentAttachments,
+  addingCommentAttachmentId = null,
   onAddComment,
   onAddChecklistItemsBulk,
   onAddAiSummaryComment,
@@ -639,7 +650,7 @@ export default function TabGeneral({
                         {ticketAttachments.length > 0 && (
                           <Flex gap={8} wrap="wrap" style={{ marginTop: 8 }}>
                             {ticketAttachments.map((att) => (
-                              <a key={att.id} href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <a key={att.id} href={attachmentDownloadHref(att.file_url, att.file_name)} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <PaperClipOutlined /> {att.file_name}
                               </a>
                             ))}
@@ -758,6 +769,13 @@ export default function TabGeneral({
                                 {comment.visibility === 'note' ? 'Note' : 'Reply'}
                               </Tag>
                             )}
+                            {comment.split_to_ticket_id ? (
+                              <Tag color="purple" style={{ margin: 0 }}>
+                                <a href={`/tickets/${comment.split_to_ticket_id}`} target="_blank" rel="noopener noreferrer">
+                                  Split to #{comment.split_to_ticket_id}
+                                </a>
+                              </Tag>
+                            ) : null}
                             <Text style={{ fontSize: 12, color: 'var(--ticket-thread-meta)' }}>
                               <DateDisplay date={comment.created_at} format="relative" />
                             </Text>
@@ -774,6 +792,9 @@ export default function TabGeneral({
                                   onAddComment={onAddAiSummaryComment}
                                   onAddChecklistItems={onAddChecklistItemsBulk}
                                 />
+                              ) : null}
+                              {ticketData?.id && !comment.split_to_ticket_id ? (
+                                <SplitCommentButton ticketId={Number(ticketData.id)} commentId={comment.id} commentHtml={comment.comment} />
                               ) : null}
                               {!isCustomer && (comment.user_id === currentUserId || comment.visibility === 'note') ? (
                                 <>
@@ -823,6 +844,28 @@ export default function TabGeneral({
                                 onChange={onEditingCommentValueChange}
                                 height="200px"
                               />
+                              {onAddCommentAttachments && (
+                                <div>
+                                  <input
+                                    type="file"
+                                    multiple
+                                    hidden
+                                    id={`edit-comment-files-${comment.id}`}
+                                    onChange={(e) => {
+                                      const files = e.target.files ? Array.from(e.target.files) : []
+                                      e.target.value = ''
+                                      void onAddCommentAttachments(comment.id, files)
+                                    }}
+                                  />
+                                  <Button
+                                    icon={<PaperClipOutlined />}
+                                    loading={addingCommentAttachmentId === comment.id}
+                                    onClick={() => document.getElementById(`edit-comment-files-${comment.id}`)?.click()}
+                                  >
+                                    Attach files
+                                  </Button>
+                                </div>
+                              )}
                               <Space>
                                 <Button
                                   type="primary"
@@ -862,9 +905,7 @@ export default function TabGeneral({
                               return (
                                 <Flex key={att.id || att.file_url} align="center" gap={4} wrap="nowrap">
                                   <a
-                                    href={att.file_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                    href={attachmentDownloadHref(att.file_url, att.file_name)}
                                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'blue', textDecoration: 'underline' }}
                                   >
                                     <PaperClipOutlined /> {att.file_name}
@@ -1040,7 +1081,12 @@ export default function TabGeneral({
                   value={sidebarDraft.companyId ?? undefined}
                   onChange={(v) => setSidebarDraft((d) => ({ ...d, companyId: v ?? null }))}
                   loading={sidebarAttributesSaving}
-                  options={companyOptions.map((c) => ({ value: c.id, label: c.name }))}
+                  options={[
+                    ...companyOptions.map((c) => ({ value: c.id, label: c.name })),
+                    ...(ticketData.company_id && ticketData.company && !companyOptions.some((c) => c.id === ticketData.company_id)
+                      ? [{ value: ticketData.company_id as string, label: `${ticketData.company.name} (inactive)` }]
+                      : []),
+                  ]}
                   showSearch optionFilterProp="label" style={{ width: '100%' }} allowClear placeholder="Select company"
                 />
               ) : (
@@ -1064,6 +1110,14 @@ export default function TabGeneral({
                 <Text style={VAL}>{selectedTagIds.length > 0 ? tagOptions.filter((t) => selectedTagIds.includes(t.id)).map((t) => t.name).join(', ') : '—'}</Text>
               )}
             </div>
+
+            {/* Skills needed */}
+            {ticketData?.id ? (
+              <div>
+                <Text style={LBL}>Skills</Text>
+                <TicketSkillsField ticketId={Number(ticketData.id)} />
+              </div>
+            ) : null}
 
             {/* Contact */}
             {canEditCompanyAndTags ? (
@@ -1131,7 +1185,16 @@ export default function TabGeneral({
 
             {/* Assignees */}
             <div>
-              <Text style={LBL}>Assignees</Text>
+              <Flex justify="space-between" align="center">
+                <Text style={LBL}>Assignees</Text>
+                {canEditAssignees && ticketData?.id ? (
+                  <AssigneeSuggestions
+                    ticketId={Number(ticketData.id)}
+                    assignedIds={sidebarDraft.assigneeIds}
+                    onAdd={(id) => setSidebarDraft((d) => (d.assigneeIds.includes(id) ? d : { ...d, assigneeIds: [...d.assigneeIds, id] }))}
+                  />
+                ) : null}
+              </Flex>
               {canEditAssignees ? (
                 <Select
                   mode="multiple"

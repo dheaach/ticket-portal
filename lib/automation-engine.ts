@@ -2,13 +2,15 @@
  * Automation rules engine: evaluate conditions and apply actions when tickets are
  * created, updated, or when a new comment/reply/note is added.
  */
-import { and, desc, eq, or } from 'drizzle-orm'
+import bcrypt from 'bcryptjs'
+import { and, desc, eq, ilike, or } from 'drizzle-orm'
 
 import { sendAutomationLog } from '@/lib/automation-log-webhook'
 import { db } from '@/lib/db'
 import {
   automationRules,
   companies,
+  companyUsers,
   teams,
   ticketAssignees,
   ticketChecklist,
@@ -18,13 +20,14 @@ import {
   ticketStatuses,
   ticketTags,
   ticketTypes,
+  users,
 } from '@/lib/db'
 
 import type { AutomationActions } from './automation-actions-types'
-import { AUTOMATION_NOTE_USER_ID } from './automation-constants'
+import { AUTOMATION_NOTE_USER_ID, AUTOMATION_REAL_SENDER } from './automation-constants'
 import type { OurCondition, OurConditionGroup, OurConditionLeaf } from './condition-builder-utils'
 import { bumpTicketDataVersion } from './firebase/ticket-sync-server'
-import { diffTicketSnapshots, loadTicketActivitySnapshot, logTicketActivity } from './ticket-activity-log'
+import { diffTicketSnapshots, enrichActivityEntityLabels, loadTicketActivitySnapshot, logTicketActivity } from './ticket-activity-log'
 import { coerceTicketType, DEFAULT_TICKET_TYPE, parseTicketType } from './ticket-classification'
 import { applyCompanySupportPriorityRank } from './ticket-company-priority-order'
 
@@ -58,6 +61,9 @@ export interface TicketContext {
   visibility?: string | null
   sender_email?: string | null
   sender_domain?: string | null
+  /** The person behind a "via Service" email (Reply-To or the address in the display name). Set when the ticket is created from email. */
+  real_sender_email?: string | null
+  real_sender_domain?: string | null
   assignee_ids?: string[]
   /** Set for event ticket_comment_added: reply | note */
   comment_visibility?: string | null
@@ -73,7 +79,6 @@ export type AutomationEventType =
   | 'ticket_comment_added'
   | 'ticket_reply_added'
   | 'ticket_note_added'
-  | 'time_trigger'
 
 function isLeaf(c: OurCondition): c is OurConditionLeaf {
   return !('conditions' in c) || !Array.isArray((c as OurConditionGroup).conditions)
@@ -169,6 +174,10 @@ function evalLeaf(leaf: OurConditionLeaf, ctx: TicketContext): boolean {
         return ctx.sender_domain ?? null
       case 'sender_email':
         return ctx.sender_email ?? null
+      case 'real_sender_domain':
+        return ctx.real_sender_domain ?? null
+      case 'real_sender_email':
+        return ctx.real_sender_email ?? null
       case 'assignee_id':
         return (ctx.assignee_ids ?? [])[0] ?? null
       case 'created_via':
@@ -238,7 +247,161 @@ function evalConditions(cond: OurConditionGroup, ctx: TicketContext): boolean {
   return operator === 'OR' ? results.some(Boolean) : results.every(Boolean)
 }
 
+const FIELD_LABEL: Record<string, string> = {
+  subject: 'Subject',
+  title: 'Subject',
+  description: 'Description',
+  priority: 'Priority',
+  status: 'Status',
+  type: 'Ticket type',
+  type_slug: 'Ticket type',
+  ticket_type: 'Classification',
+  sender_domain: 'Sender Domain',
+  sender_email: 'Sender Email',
+  real_sender_domain: 'Real Sender Domain',
+  real_sender_email: 'Real Sender Email',
+  assignee_id: 'Assignee',
+  created_via: 'Created Via',
+  days_since_updated: 'Days since last updated',
+  comment_visibility: 'Comment visibility',
+  comment_author_type: 'Comment author',
+}
+
+const OPERATOR_TEXT: Record<string, string> = {
+  '=': 'is',
+  '!=': 'is not',
+  contains: 'contains',
+  notcontains: 'does not contain',
+  startswith: 'starts with',
+  beginswith: 'starts with',
+  endswith: 'ends with',
+  in: 'is one of',
+  notin: 'is not one of',
+  null: 'is empty',
+  isnull: 'is empty',
+  notnull: 'is not empty',
+  isnotnull: 'is not empty',
+  '>': 'is more than',
+  '>=': 'is at least',
+  '<': 'is less than',
+  '<=': 'is at most',
+}
+
+function clip(v: unknown, n = 80): string {
+  const s = String(v ?? '').replace(/\s+/g, ' ').trim()
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+/** What the ticket had in a condition's field, for the "why did this run" note. */
+function fieldValueForLog(field: string, ctx: TicketContext): unknown {
+  switch (field) {
+    case 'subject':
+    case 'title':
+      return ctx.title
+    case 'description':
+      return ctx.description
+    case 'priority':
+      return ctx.priority
+    case 'status':
+      return ctx.status
+    case 'type':
+    case 'type_slug':
+      return ctx.type_slug
+    case 'ticket_type':
+      return ctx.ticket_type
+    case 'sender_domain':
+      return ctx.sender_domain
+    case 'sender_email':
+      return ctx.sender_email
+    case 'real_sender_domain':
+      return ctx.real_sender_domain
+    case 'real_sender_email':
+      return ctx.real_sender_email
+    case 'assignee_id':
+      return (ctx.assignee_ids ?? [])[0]
+    case 'created_via':
+      return ctx.created_via
+    case 'days_since_updated':
+      return ctx.days_since_updated
+    case 'comment_visibility':
+      return ctx.comment_visibility
+    case 'comment_author_type':
+      return ctx.comment_author_type
+    default:
+      return null
+  }
+}
+
+/** The conditions that were true, in words: ["Sender Domain is \"provencontent.com\"", ...]. Used for the activity log. */
+function describeMatch(cond: OurConditionGroup, ctx: TicketContext): string[] {
+  const out: string[] = []
+  for (const c of cond.conditions ?? []) {
+    if (!isLeaf(c)) {
+      if (evalConditions(c as OurConditionGroup, ctx)) out.push(...describeMatch(c as OurConditionGroup, ctx))
+      continue
+    }
+    if (!evalLeaf(c, ctx)) continue
+    out.push(describeLeaf(c, ctx))
+  }
+  return out
+}
+
+/**
+ * One condition in words, e.g. `Sender Domain is "provencontent.com"`.
+ * `withActual` always adds what the ticket has (used by Test rule); otherwise only when it is not an exact match.
+ */
+export function describeLeaf(c: OurConditionLeaf, ctx: TicketContext, withActual = false): string {
+  const field = String(c.field || '').toLowerCase()
+  const op = String(c.operator || '=').toLowerCase().replace(/\s+/g, '')
+  const label = FIELD_LABEL[field] ?? field
+  const verb = OPERATOR_TEXT[op] ?? op
+  const empty = op === 'null' || op === 'isnull' || op === 'notnull' || op === 'isnotnull'
+  const expected = empty ? '' : ` "${clip(c.value)}"`
+  const actual = fieldValueForLog(field, ctx)
+  const hasActual = actual !== null && actual !== undefined && String(actual).trim() !== ''
+  if (withActual) return `${label} ${verb}${expected} (ticket has ${hasActual ? `"${clip(actual)}"` : 'nothing'})`
+  const showActual = !empty && op !== '=' && hasActual
+  return `${label} ${verb}${expected}${showActual ? ` (was "${clip(actual)}")` : ''}`
+}
+
+/** Whether one condition is true for this ticket (Test rule). */
+export function conditionLeafPasses(leaf: OurConditionLeaf, ctx: TicketContext): boolean {
+  return evalLeaf(leaf, ctx)
+}
+
+/** Whether a condition group is true for this ticket (Test rule). */
+export function conditionsPass(cond: OurConditionGroup, ctx: TicketContext): boolean {
+  return evalConditions(cond, ctx)
+}
+
 /** Load ticket + assignees for automation context (shared across triggers). */
+/**
+ * The user a "Set Contact" action points at. A specific user is checked (must exist and have an email).
+ * "The real sender" finds the customer with the Reply-To / via-name address, and creates one when there is none.
+ */
+async function resolveAutomationContact(value: string, ctx: TicketContext, companyId: string | null): Promise<string | null> {
+  if (value !== AUTOMATION_REAL_SENDER) {
+    const [u] = await db.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, value)).limit(1)
+    return u && String(u.email || '').trim() ? u.id : null
+  }
+  const email = ctx.real_sender_email?.trim().toLowerCase()
+  if (!email) return null
+  const [existing] = await db.select({ id: users.id }).from(users).where(ilike(users.email, email.replace(/[%_\\]/g, '\\$&'))).limit(1)
+  if (existing) return existing.id
+  const name = email.split('@')[0] || 'User'
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+  let pw = ''
+  for (let i = 0; i < 24; i++) pw += chars[Math.floor(Math.random() * chars.length)]
+  const [created] = await db
+    .insert(users)
+    .values({ email, fullName: name, role: 'customer', companyId, passwordHash: await bcrypt.hash(pw, 10) })
+    .returning({ id: users.id })
+  if (created && companyId) {
+    await db.insert(companyUsers).values({ companyId, userId: created.id }).onConflictDoNothing()
+  }
+  return created?.id ?? null
+}
+
 export async function loadAutomationTicketContext(ticketId: number): Promise<TicketContext | null> {
   const [row] = await db
     .select({
@@ -333,6 +496,9 @@ export async function runAutomationRules(
     if (!companyMatch) continue
     if (!evalConditions(cond, ctx)) continue
 
+    /** Why this rule ran, saved with its activity rows. */
+    const why = { event: eventType, matched: describeMatch(cond, ctx), company_scoped: Boolean(rule.companyId) }
+
     sendAutomationLog({
       event: 'automation_matched',
       ticket_id: ctx.id,
@@ -386,6 +552,10 @@ export async function runAutomationRules(
     }
     if (actions.visibility) {
       updates.visibility = actions.visibility
+    }
+    if (actions.contact_user_id) {
+      const contactId = await resolveAutomationContact(actions.contact_user_id, ctx, (updates.companyId as string | undefined) ?? ctx.company_id ?? null)
+      if (contactId) updates.contactUserId = contactId
     }
     if (actions.ticket_type !== undefined && actions.ticket_type !== null && actions.ticket_type !== '') {
       const cls = parseTicketType(actions.ticket_type)
@@ -478,8 +648,10 @@ export async function runAutomationRules(
               source: 'automation_rule',
               rule_id: rule.id,
               rule_name: rule.name ?? null,
+              why,
               changed_keys: Object.keys(diff),
               changes: diff,
+              entity_labels: await enrichActivityEntityLabels(diff),
             },
           })
         }
@@ -512,6 +684,7 @@ export async function runAutomationRules(
             source: 'automation_rule',
             rule_id: rule.id,
             rule_name: rule.name ?? null,
+            why,
           },
         })
       }

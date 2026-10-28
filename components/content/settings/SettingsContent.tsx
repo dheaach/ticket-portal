@@ -8,6 +8,7 @@ import {
   CalendarOutlined,
   CheckSquareOutlined,
   ClockCircleOutlined,
+  CloudDownloadOutlined,
   FileTextOutlined,
   GlobalOutlined,
   InfoCircleOutlined,
@@ -49,6 +50,7 @@ import {
   canAccessUsers,
   canManageDashboardAnnouncements,
   canManageGlobalAnnouncement,
+  canManageTeamAvailability,
   isAdmin,
 } from '@/lib/auth-utils'
 
@@ -85,7 +87,7 @@ function HubTile({ title, description, href, icon }: HubTileProps) {
         className="settings-hub-tile"
         style={tileStyle}
       >
-        <div style={{ fontSize: 22, color: '#16324A', marginBottom: 12 }}>{icon}</div>
+        <div style={{ fontSize: 22, color: '#1890ff', marginBottom: 12 }}>{icon}</div>
         <div>
         <Text strong style={{ fontSize: 15, display: 'block', color: 'var(--settings-hub-tile-title)' }}>
           {title}
@@ -317,6 +319,16 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                 {isAdmin(role) && (
                   <Col xs={24} sm={12} md={8}>
                     <HubTile
+                      title="Freshdesk Import"
+                      description="Import companies and contacts from Freshdesk"
+                      href="/settings/freshdesk-import"
+                      icon={<CloudDownloadOutlined />}
+                    />
+                  </Col>
+                )}
+                {isAdmin(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
                       title="Connection Status"
                       description="Check database, storage, Firebase, email, and AI connectivity"
                       href="/settings/connection-status"
@@ -333,6 +345,7 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
             canAccessCustomerTimeReport(role) ||
             canAccessRecapSnapshots(role) ||
             canAccessCustomerWeeklyRecap(role) ||
+            canManageTeamAvailability(role) ||
             canAccessCompanyLog(role)) && (
             <Section heading="Reports">
               <Row gutter={[16, 16]}>
@@ -352,6 +365,56 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                       title="Customer Report"
                       description="Customer-facing time summary per company"
                       href="/customer-time-report"
+                      icon={<BarChartOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessTeams(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Team Report"
+                      description="Utilization per person, split by company, with loose days"
+                      href="/team-report"
+                      icon={<TeamOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessCustomerTimeReport(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="New Customer Report"
+                      description="Pick a team or companies, set the dates, and load the report"
+                      href="/new-customer-report"
+                      icon={<BarChartOutlined />}
+                    />
+                  </Col>
+                )}
+                {isAdmin(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Shifts"
+                      description="Work shifts (WIB) that can be given to people"
+                      href="/settings/shifts"
+                      icon={<ClockCircleOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessTeams(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Skills"
+                      description="Skill list used on people, tickets and company defaults"
+                      href="/settings/skills"
+                      icon={<TeamOutlined />}
+                    />
+                  </Col>
+                )}
+                {canAccessCustomerTimeReport(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Pool Report"
+                      description="Open tickets per customer with daily and weekly time spent"
+                      href="/pool-report"
                       icon={<BarChartOutlined />}
                     />
                   </Col>
@@ -382,6 +445,16 @@ export default function SettingsContent({ user: currentUser }: SettingsContentPr
                       title="Customer Weekly Recap"
                       description="Utilization and client time per customer per week"
                       href="/settings/customer-weekly-recap"
+                      icon={<CalendarOutlined />}
+                    />
+                  </Col>
+                )}
+                {canManageTeamAvailability(role) && (
+                  <Col xs={24} sm={12} md={8}>
+                    <HubTile
+                      title="Team Availability"
+                      description="Leave, sick days, on-duty (piket) and public holidays per person"
+                      href="/settings/team-availability"
                       icon={<CalendarOutlined />}
                     />
                   </Col>

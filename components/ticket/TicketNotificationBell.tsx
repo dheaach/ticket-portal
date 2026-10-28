@@ -1,18 +1,18 @@
 'use client'
 
 import { BellOutlined } from '@ant-design/icons'
-import { App, Badge, Empty, Popover, Spin, Tooltip, Typography } from 'antd'
+import { App, Badge, Popover, Spin, Tooltip } from 'antd'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { type CSSProperties, useCallback, useMemo, useState } from 'react'
+import { type CSSProperties, useCallback, useState } from 'react'
 
+import { SpaNavLink } from '@/components/common/SpaNavLink'
 import { type TicketNotificationItem, useNotificationPoll } from '@/components/providers/NotificationPollProvider'
+import TicketActivityActorAvatar from '@/components/ticket/TicketActivityActorAvatar'
 
 dayjs.extend(relativeTime)
-
-const { Text } = Typography
 
 /** Decode HTML entities like &nbsp; to regular characters */
 const decodeHtmlEntities = (text: string): string => {
@@ -42,7 +42,7 @@ export default function TicketNotificationBell() {
   const { message } = App.useApp()
   const { status } = useSession()
   const router = useRouter()
-  const { items, loading, unreadCount, readCount, setItems } = useNotificationPoll()
+  const { items, loading, unreadCount, readCount, setItems, refresh, clearUnreadExtra } = useNotificationPoll()
   const [open, setOpen] = useState(false)
   const [deletingRead, setDeletingRead] = useState(false)
 
@@ -65,11 +65,16 @@ export default function TicketNotificationBell() {
   )
 
   const markAllRead = useCallback(async () => {
-    const unread = items.filter((i) => !i.read).map((i) => i.id)
-    if (unread.length === 0) return
-    await markReadApi(unread)
+    if (unreadCount === 0) return
+    await fetch('/api/notifications/mark-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ all: true }),
+    })
     setItems((prev) => prev.map((i) => (i.read ? i : { ...i, read: true })))
-  }, [items, markReadApi, setItems])
+    clearUnreadExtra()
+  }, [unreadCount, setItems, clearUnreadExtra])
 
   const deleteAllRead = useCallback(async () => {
     if (readCount === 0) return
@@ -116,20 +121,19 @@ export default function TicketNotificationBell() {
   if (status !== 'authenticated') return null
 
   const popoverContent = (
-    <div style={{ width: 360, maxWidth: 'calc(100vw - 32px)' }}>
+    <div style={{ width: 380, maxWidth: 'calc(100vw - 32px)' }}>
       <div
         style={{
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--ticket-nav-panel-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 8,
           gap: 8,
           flexWrap: 'wrap',
         }}
       >
-        <Text strong style={{ fontSize: 13 }}>
-          Notifications
-        </Text>
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--ticket-nav-text)' }}>Notifications</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {unreadCount > 0 && (
             <Tooltip title="Mark all as read">
@@ -169,42 +173,65 @@ export default function TicketNotificationBell() {
           <Spin size="small" />
         </div>
       ) : items.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No notifications yet" />
+        <div style={{ padding: 14, color: 'var(--ticket-nav-muted)', fontSize: 13 }}>No notifications yet</div>
       ) : (
-        <div style={{ maxHeight: 380, overflow: 'auto' }}>
+        <div style={{ maxHeight: 360, overflow: 'auto' }}>
           {items.map((n) => (
-            <div
+            <button
               key={n.id}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onItemClick(n)
-                }
-              }}
-              style={{
-                cursor: 'pointer',
-                padding: '10px 8px',
-                background: n.read ? undefined : 'rgba(102, 126, 234, 0.06)',
-                borderRadius: 6,
-              }}
+              type="button"
+              role="menuitem"
               onClick={() => onItemClick(n)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '10px 14px',
+                border: 'none',
+                borderBottom: '1px solid var(--ticket-nav-panel-row-border)',
+                background: n.read ? 'transparent' : 'rgba(102, 126, 234, 0.07)',
+                cursor: 'pointer',
+                textAlign: 'left',
+                fontSize: 13,
+              }}
             >
-              <div style={{ width: '100%', minWidth: 0 }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>
+              <TicketActivityActorAvatar
+                size={36}
+                actorRole="agent"
+                avatarUrl={n.actorAvatarUrl}
+                name={n.actorName}
+              />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ color: 'var(--ticket-nav-muted)', fontSize: 11, marginBottom: 4 }}>
                   #{n.ticketId}
                   {n.createdAt ? ` · ${dayjs(n.createdAt).fromNow()}` : ''}
                 </div>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{n.title}</div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis>
+                <div style={{ fontWeight: n.read ? 500 : 600, color: 'var(--ticket-nav-text)', marginBottom: 2 }}>{n.title}</div>
+                <div
+                  style={{
+                    color: 'var(--ticket-nav-text-secondary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {decodeHtmlEntities(n.body)}
-                </Text>
+                </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
+      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--ticket-nav-panel-border)', textAlign: 'center' }}>
+        <SpaNavLink
+          href="/notifications"
+          style={{ fontSize: 13, fontWeight: 500, color: 'var(--ticket-nav-filter-link)' }}
+          onClick={() => setOpen(false)}
+        >
+          See all
+        </SpaNavLink>
+      </div>
     </div>
   )
 
@@ -215,9 +242,14 @@ export default function TicketNotificationBell() {
       mouseEnterDelay={0.12}
       mouseLeaveDelay={0.28}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next)
+        // The background poll runs every 2 minutes; fetch right away when the panel is opened.
+        if (next) void refresh()
+      }}
       placement="bottomRight"
       destroyOnHidden={false}
+      styles={{ container: { padding: 0, overflow: 'hidden' } }}
     >
       <button
         type="button"
