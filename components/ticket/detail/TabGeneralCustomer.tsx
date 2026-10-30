@@ -240,6 +240,8 @@ export default function TabGeneralCustomer({
                   <a
                     key={att.id}
                     href={attachmentDownloadHref(att.file_url, att.file_name)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'blue' }}
                   >
                     <PaperClipOutlined /> {att.file_name}
@@ -424,6 +426,8 @@ export default function TabGeneralCustomer({
                                 <Flex key={att.id || att.file_url} align="center" gap={4} wrap="nowrap">
                                   <a
                                     href={attachmentDownloadHref(att.file_url, att.file_name)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     style={{
                                       display: 'inline-flex',
                                       alignItems: 'center',

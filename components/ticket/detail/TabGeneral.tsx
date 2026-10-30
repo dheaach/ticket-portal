@@ -650,7 +650,7 @@ export default function TabGeneral({
                         {ticketAttachments.length > 0 && (
                           <Flex gap={8} wrap="wrap" style={{ marginTop: 8 }}>
                             {ticketAttachments.map((att) => (
-                              <a key={att.id} href={attachmentDownloadHref(att.file_url, att.file_name)} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <a key={att.id} href={attachmentDownloadHref(att.file_url, att.file_name)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <PaperClipOutlined /> {att.file_name}
                               </a>
                             ))}
@@ -906,6 +906,8 @@ export default function TabGeneral({
                                 <Flex key={att.id || att.file_url} align="center" gap={4} wrap="nowrap">
                                   <a
                                     href={attachmentDownloadHref(att.file_url, att.file_name)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'blue', textDecoration: 'underline' }}
                                   >
                                     <PaperClipOutlined /> {att.file_name}
