@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
 
 import { auth } from '@/auth'
-import { getObjectBuffer, getPublicUrl } from '@/lib/storage-provider'
+import * as idrive from '@/lib/storage-idrive'
+import * as local from '@/lib/storage-local'
 
 /**
  * GET /api/attachments/download?url=<file url>&name=<file name>
  * Serves a stored attachment from our own storage.
  * Images and PDFs are shown inline; other types are downloaded.
- * Only files on our own storage origin are served.
+ *
+ * Resolves by URL shape (local `/api/storage/file/...` vs iDrive public URL),
+ * not by STORAGE_PROVIDER — draft/local files must still open when the
+ * active provider is iDrive, and vice versa.
  */
 
 const INLINE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'])
@@ -22,26 +26,8 @@ const CONTENT_TYPES: Record<string, string> = {
   txt: 'text/plain',
 }
 
-/** Object key for a public storage URL, or null when the URL is not ours. */
-function storageKeyFromPublicUrl(target: URL, reqOrigin: string): string | null {
-  let probe: URL
-  try {
-    probe = new URL(getPublicUrl('probe'), reqOrigin)
-  } catch {
-    return null
-  }
-  if (target.origin !== probe.origin && target.origin !== reqOrigin) return null
-
-  const prefix = probe.pathname.slice(0, -'probe'.length).replace(/\/$/, '')
-  let rest = target.pathname
-  if (prefix) {
-    if (!rest.startsWith(`${prefix}/`)) return null
-    rest = rest.slice(prefix.length + 1)
-  } else {
-    rest = rest.replace(/^\/+/, '')
-  }
+function decodeKeySegments(rest: string): string | null {
   if (!rest) return null
-
   let key: string
   try {
     key = rest
@@ -55,6 +41,40 @@ function storageKeyFromPublicUrl(target: URL, reqOrigin: string): string | null 
     return null
   }
   return key
+}
+
+function localPublicPrefix(): string {
+  return (process.env.STORAGE_LOCAL_PUBLIC_URL || '/api/storage/file').replace(/\/+$/, '')
+}
+
+/** Local object key when `target` is a same-origin local storage URL. */
+function localKeyFromUrl(target: URL, reqOrigin: string): string | null {
+  if (target.origin !== reqOrigin) return null
+  const prefix = localPublicPrefix()
+  if (!target.pathname.startsWith(`${prefix}/`)) return null
+  return decodeKeySegments(target.pathname.slice(prefix.length).replace(/^\/+/, ''))
+}
+
+/** iDrive object key when `target` is on our configured public/endpoint host. */
+function idriveKeyFromUrl(target: URL, reqOrigin: string): string | null {
+  let probe: URL
+  try {
+    probe = new URL(idrive.getPublicUrl('probe'), reqOrigin)
+  } catch {
+    return null
+  }
+  if (target.origin !== probe.origin) return null
+
+  const prefix = probe.pathname.slice(0, -'probe'.length).replace(/\/$/, '')
+  let rest = target.pathname
+  if (prefix) {
+    if (!rest.startsWith(`${prefix}/`)) return null
+    rest = rest.slice(prefix.length + 1)
+  } else {
+    rest = rest.replace(/^\/+/, '')
+  }
+  // Public base may include the bucket as a path segment (…/dtlabs/key).
+  return decodeKeySegments(rest)
 }
 
 export async function GET(request: Request) {
@@ -72,16 +92,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid url' }, { status: 400 })
   }
 
-  const key = storageKeyFromPublicUrl(target, reqUrl.origin)
-  if (!key) return NextResponse.json({ error: 'Host not allowed' }, { status: 400 })
+  const localKey = localKeyFromUrl(target, reqUrl.origin)
+  const idriveKey = localKey ? null : idriveKeyFromUrl(target, reqUrl.origin)
+  if (!localKey && !idriveKey) {
+    return NextResponse.json({ error: 'Host not allowed' }, { status: 400 })
+  }
 
-  const result = await getObjectBuffer(key)
+  const key = (localKey || idriveKey)!
+  const result = localKey
+    ? await local.getObjectBuffer(localKey)
+    : await idrive.getObjectBuffer(idriveKey!)
+
   if ('error' in result || !result.buffer?.length) {
     return NextResponse.json({ error: 'File not found' }, { status: 404 })
   }
 
   const ext = key.split('.').pop()?.toLowerCase() || ''
-  const storedType = result.contentType && result.contentType !== 'application/octet-stream' ? result.contentType : ''
+  const storedType =
+    result.contentType && result.contentType !== 'application/octet-stream' ? result.contentType : ''
   const contentType = storedType || CONTENT_TYPES[ext] || 'application/octet-stream'
   const disposition = INLINE_EXT.has(ext) ? 'inline' : 'attachment'
   const fallback = key.split('/').pop() || 'download'
