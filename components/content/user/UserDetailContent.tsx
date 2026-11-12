@@ -1,15 +1,21 @@
 'use client'
 
-import { ArrowLeftOutlined, BankOutlined, CalendarOutlined, ClockCircleOutlined, CloseOutlined, EditOutlined, GlobalOutlined, HistoryOutlined, IdcardOutlined, LockOutlined, MailOutlined, NumberOutlined,PhoneOutlined, SaveOutlined, ToolOutlined, TranslationOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
+import { ApiOutlined, ArrowLeftOutlined, BankOutlined, CalendarOutlined, ClockCircleOutlined, CloseOutlined, EditOutlined, GlobalOutlined, HistoryOutlined, IdcardOutlined, LockOutlined, MailOutlined, NumberOutlined,PhoneOutlined, SaveOutlined, ToolOutlined, TranslationOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
 import { Avatar, Button, Card, Col, DatePicker, Descriptions, Divider, Drawer, Flex,Form, Input, Layout, message, Modal, Radio, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { useCallback, useEffect, useMemo,useRef, useState } from 'react'
 
+import MyTeamReportCard from '@/components/profile/MyTeamReportCard'
+import ProfileIntegrations from '@/components/profile/ProfileIntegrations'
 import UserSkillsField from '@/components/skills/UserSkillsField'
 import UserCompanyHistory from '@/components/user/UserCompanyHistory'
+import ViewAsButton, { canViewAs } from '@/components/user/ViewAsButton'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
+import { canViewCustomerReports } from '@/lib/auth-utils'
+import { TIMEZONE_OPTIONS } from '@/lib/timezones'
 import {
   getUserDepartmentAccentColor,
   getUserPositionAccentColor,
@@ -60,14 +66,17 @@ interface UserDetailContentProps {
 
 export default function UserDetailContent({ user: currentUser, userData: initialUserData }: UserDetailContentProps) {
   const isViewerCustomer = (initialUserData.role ?? '').toLowerCase() === 'customer'
-  const isAdmin = ((currentUser as { role?: string }).role ?? '').toLowerCase() === 'admin'
+  const isAdmin = ['admin', 'operations'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase())
   const router = useRouter()
   const searchParams = useSearchParams()
   const openedEditFromQueryRef = useRef(false)
   const [collapsed, setCollapsed] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  // The job type preselected when the person starts a timer (own profile only).
+  const [jobTypeOptions, setJobTypeOptions] = useState<{ slug: string; title: string }[]>([])
   const [userData, setUserData] = useState(initialUserData)
   const extraCompanies: { id: string; name: string }[] = userData.extra_companies ?? []
+  const { update: updateSession } = useSession()
   const isOwnProfile = String(currentUser.id) === String(userData?.id)
   const [shiftOptions, setShiftOptions] = useState<{ id: string; title: string; start: string; end: string; crosses_midnight: boolean }[]>([])
   useEffect(() => {
@@ -340,6 +349,14 @@ export default function UserDetailContent({ user: currentUser, userData: initial
     }
     return colorMap[status] || 'default'
   }
+  useEffect(() => {
+    if (!isOwnProfile) return
+    fetch('/api/job-types', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setJobTypeOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setJobTypeOptions([]))
+  }, [isOwnProfile])
+
 
   const handleEdit = () => {
     setIsEditing(true)
@@ -356,6 +373,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
       bio: userData.bio || '',
       timezone: userData.timezone || 'UTC',
       locale: userData.locale || 'en',
+      default_job_type: (userData as { default_job_type?: string | null }).default_job_type || undefined,
       joined_at: userData.joined_at ? dayjs(userData.joined_at) : null,
       left_at: userData.left_at ? dayjs(userData.left_at) : null,
       shift_id: userData.shift_id || undefined,
@@ -386,6 +404,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
       bio: userData.bio || '',
       timezone: userData.timezone || 'UTC',
       locale: userData.locale || 'en',
+      default_job_type: (userData as { default_job_type?: string | null }).default_job_type || undefined,
       joined_at: userData.joined_at ? dayjs(userData.joined_at) : null,
       left_at: userData.left_at ? dayjs(userData.left_at) : null,
       is_email_verified: userData.is_email_verified || false,
@@ -453,6 +472,15 @@ export default function UserDetailContent({ user: currentUser, userData: initial
         updateData.company_id = values.company_id || null
       }
 
+      // The default job type of the timer lives in the person's own profile settings.
+      if (isOwnProfile) {
+        await apiFetch('/api/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ default_job_type: values.default_job_type || null }),
+        })
+      }
+
       await apiFetch(`/api/users/${userData.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -462,6 +490,8 @@ export default function UserDetailContent({ user: currentUser, userData: initial
       setIsEditing(false)
       setActiveTabKey('general')
       message.success(isOwnProfile ? 'Profile updated successfully' : 'User updated successfully')
+      // The header shows the signed-in person's name and picture, so it is refreshed after they change their own.
+      if (isOwnProfile) await updateSession({})
       router.refresh()
     } catch (error: any) {
       message.error(error.message || 'Failed to update user')
@@ -650,7 +680,8 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         <Form.Item name="role" style={{ margin: 0 }}>
                           <Select style={{ width: 120 }}>
                             <Option value="admin">Admin</Option>
-                            <Option value="manager">Manager</Option>
+                            <Option value="operations">Operations</Option>
+<Option value="manager">Team Leader / PIC</Option>
                             <Option value="staff">Staff</Option>
                             {/* <Option value="customer">Customer</Option> */}
                           </Select>
@@ -675,6 +706,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                       <Tag color={getStatusColor(userData.status)} style={{ fontSize: 14, padding: '4px 12px' }}>
                         {userData.status?.toUpperCase()}
                       </Tag>
+                      {canViewAs((currentUser as { role?: string }).role, userData.role) ? <ViewAsButton userId={userData.id} userName={userData.full_name} /> : null}
                     </>
                   )}
                 </Space>
@@ -853,20 +885,13 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                           </>
                         )}
                         <Form.Item name="timezone" label="Timezone">
-                          <Select prefix={<GlobalOutlined />} placeholder="Select Timezone" showSearch>
-                            <Option value="UTC">UTC</Option>
-                            <Option value="America/New_York">America/New_York (EST)</Option>
-                            <Option value="America/Chicago">America/Chicago (CST)</Option>
-                            <Option value="America/Denver">America/Denver (MST)</Option>
-                            <Option value="America/Los_Angeles">America/Los_Angeles (PST)</Option>
-                            <Option value="Europe/London">Europe/London (GMT)</Option>
-                            <Option value="Europe/Paris">Europe/Paris (CET)</Option>
-                            <Option value="Asia/Tokyo">Asia/Tokyo (JST)</Option>
-                            <Option value="Asia/Shanghai">Asia/Shanghai (CST)</Option>
-                            <Option value="Asia/Jakarta">Asia/Jakarta (WIB)</Option>
-                            <Option value="Asia/Singapore">Asia/Singapore (SGT)</Option>
-                          </Select>
+                          <Select options={TIMEZONE_OPTIONS} prefix={<GlobalOutlined />} placeholder="Select Timezone" showSearch />
                         </Form.Item>
+                        {isOwnProfile && !isCustomer && (
+                          <Form.Item name="default_job_type" label="Default job type (Time Tracker)" extra="Preselected when you start a timer on a ticket.">
+                            <Select allowClear placeholder="Other" options={jobTypeOptions.map((o) => ({ value: o.slug, label: o.title }))} />
+                          </Form.Item>
+                        )}
                         {isAdmin && (
                           <>
                             <Form.Item name="shift_id" label="Shift" extra="Times are WIB. Manage the list in Settings, Shifts.">
@@ -937,6 +962,11 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                             <Text>{userData.timezone || 'UTC'}</Text>
                           </Space>
                         </Descriptions.Item>
+                        {isOwnProfile && !isCustomer && (
+                          <Descriptions.Item label="Default job type">
+                            {jobTypeOptions.find((o) => o.slug === (userData as { default_job_type?: string | null }).default_job_type)?.title ?? 'Other'}
+                          </Descriptions.Item>
+                        )}
                         {!isCustomer && (
                           <Descriptions.Item label="Shift">
                             {(() => {
@@ -1002,7 +1032,8 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         >
                           <Select>
                             <Option value="admin">Admin</Option>
-                            <Option value="manager">Manager</Option>
+                            <Option value="operations">Operations</Option>
+<Option value="manager">Team Leader / PIC</Option>
                             <Option value="staff">Staff</Option>
                             <Option value="customer">Customer</Option>
                           </Select>
@@ -1154,7 +1185,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                 </Card>
               </Col>
             </Row>
-                    {isCustomer && userData?.id && ['admin', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase()) ? (
+                    {isCustomer && userData?.id && ['admin', 'operations', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase()) ? (
                       <UserCompanyHistory userId={String(userData.id)} />
                     ) : null}
                     </>
@@ -1248,6 +1279,12 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         />
                       )}
 
+                      {isOwnProfile && canViewCustomerReports((currentUser as { role?: string }).role) ? (
+                        <div style={{ marginBottom: 24 }}>
+                          <MyTeamReportCard />
+                        </div>
+                      ) : null}
+
                       {/* Filter Section */}
                       <Card style={{ marginBottom: 24 }}>
                         <Flex justify="space-between" align="center">
@@ -1287,7 +1324,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         </Flex>
                       </Card>
                       <Row gutter={[24, 24]}>
-                        <Col xs={24} sm={12}>
+                        <Col xs={24}>
                         <Card title="Most reported tickets" size="small" loading={timeTrackerLoading}>
                         <Row gutter={[24, 16]}>
                           
@@ -1437,9 +1474,10 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                         />
                       </Drawer>
                         </Col>
-                        <Col xs={24} sm={12}> 
-                        <Card>
+                        <Col xs={24}>
+                        <Card title="Time entries" size="small">
                         <Table
+                        scroll={{ x: 'max-content' }}
                         columns={[
                           {
                             title: 'Ticket',
@@ -1577,7 +1615,7 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                     </div>
                   ),
                 },
-                ...(!isCustomer && userData?.id && ['admin', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase())
+                ...(!isCustomer && userData?.id && ['admin', 'operations', 'manager', 'staff'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase())
                   ? [
                       {
                         key: 'skills',
@@ -1595,6 +1633,20 @@ export default function UserDetailContent({ user: currentUser, userData: initial
                             />
                           </Card>
                         ),
+                      },
+                    ]
+                  : []),
+                ...(isOwnProfile && !isCustomer
+                  ? [
+                      {
+                        key: 'integrations',
+                        label: (
+                          <span>
+                            <ApiOutlined />
+                            Integrations
+                          </span>
+                        ),
+                        children: <ProfileIntegrations user={{ id: String(userData.id), email: userData.email, name: userData.full_name }} />,
                       },
                     ]
                   : []),

@@ -3,14 +3,13 @@ import { redirect } from 'next/navigation'
 
 import { auth } from '@/auth'
 import RecurringTicketFormPage from '@/components/content/recurring-tickets/RecurringTicketFormPage'
-import { canAccessRecurringTickets } from '@/lib/auth-utils'
 import { db } from '@/lib/db'
 import { recurringTickets } from '@/lib/db/schema'
 
 export default async function EditRecurringTicketPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
-  const role = (session?.user as { role?: string })?.role
-  if (!session?.user || !canAccessRecurringTickets(role)) redirect('/settings/recurring-tickets')
+  const role = (session?.user as { role?: string })?.role?.toLowerCase()
+  if (!session?.user || !['admin', 'operations', 'manager'].includes(role ?? '')) redirect('/settings/recurring-tickets')
 
   const { id } = await params
   const [row] = await db.select().from(recurringTickets).where(eq(recurringTickets.id, id)).limit(1)

@@ -126,6 +126,9 @@ interface Comment {
   author_type?: 'customer' | 'agent' | 'automation'
   /** Set when this reply was split into its own ticket. */
   split_to_ticket_id?: number | null
+  /** 'api' when written through the API, with the assistant's name in source_label. */
+  source?: string | null
+  source_label?: string | null
   user?: { id: string; full_name: string | null; email: string; avatar_url?: string | null }
   comment_attachments?: CommentAttachment[] | null
   tagged_user_ids?: string[]
@@ -342,7 +345,6 @@ export default function TabGeneral({
   onSaveEditComment,
   onCancelEditComment,
   onDeleteComment,
-  canDeleteComment,
   onRemoveCommentAttachment,
   removingCommentAttachmentKey = null,
   onAddCommentAttachments,
@@ -386,7 +388,7 @@ export default function TabGeneral({
   rightCollapsed: rightCollapsedProp,
   onRightCollapsedChange,
 }: TabGeneralProps) {
-  const canAccessTicketSummary = aiConfigured && ['admin', 'manager'].includes((currentUserRole ?? '').toLowerCase())
+  const canAccessTicketSummary = aiConfigured && ['admin', 'operations', 'manager'].includes((currentUserRole ?? '').toLowerCase())
   const [rightCollapsedLocal, setRightCollapsedLocal] = useState(false)
   const rightCollapsed = rightCollapsedProp ?? rightCollapsedLocal
   const setRightCollapsed = (v: boolean | ((prev: boolean) => boolean)) => {
@@ -769,6 +771,11 @@ export default function TabGeneral({
                                 {comment.visibility === 'note' ? 'Note' : 'Reply'}
                               </Tag>
                             )}
+                            {comment.source === 'api' ? (
+                              <Tag color="geekblue" style={{ margin: 0 }}>
+                                via API{comment.source_label ? ` · ${comment.source_label}` : ''}
+                              </Tag>
+                            ) : null}
                             {comment.split_to_ticket_id ? (
                               <Tag color="purple" style={{ margin: 0 }}>
                                 <a href={`/tickets/${comment.split_to_ticket_id}`} target="_blank" rel="noopener noreferrer">
@@ -805,17 +812,15 @@ export default function TabGeneral({
                                       onEditComment(comment.id, comment.comment)
                                     }}
                                   />
-                                  {canDeleteComment(comment.created_at) ? (
-                                    <Popconfirm
-                                      title="Delete comment"
-                                      description="Are you sure?"
-                                      onConfirm={() => onDeleteComment(comment.id)}
-                                      okText="Yes"
-                                      cancelText="No"
-                                    >
-                                      <Button danger icon={<DeleteOutlined />} size="middle" />
-                                    </Popconfirm>
-                                  ) : null}
+                                  <Popconfirm
+                                    title="Delete comment"
+                                    description="Are you sure?"
+                                    onConfirm={() => onDeleteComment(comment.id)}
+                                    okText="Yes"
+                                    cancelText="No"
+                                  >
+                                    <Button danger icon={<DeleteOutlined />} size="middle" />
+                                  </Popconfirm>
                                 </>
                               ) : null}
                             </Space>
@@ -905,9 +910,7 @@ export default function TabGeneral({
                               return (
                                 <Flex key={att.id || att.file_url} align="center" gap={4} wrap="nowrap">
                                   <a
-                                    href={attachmentDownloadHref(att.file_url, att.file_name)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                    href={attachmentDownloadHref(att.file_url, att.file_name)} target="_blank" rel="noopener noreferrer"
                                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'blue', textDecoration: 'underline' }}
                                   >
                                     <PaperClipOutlined /> {att.file_name}
@@ -1020,7 +1023,7 @@ export default function TabGeneral({
               </Flex>
             </div>
           )}
-          <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
+          <div style={{ padding: 16, overflowY: 'auto', flex: 1, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.3) transparent' }}>
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
 
             {/* Status / Project status */}
@@ -1314,7 +1317,7 @@ export default function TabGeneral({
             />
           </div>
           {!companyCollapsed && (
-            <div style={{ padding: 16, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ padding: 16, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.3) transparent' }}>
               {!ticketData?.company_id ? (
                 <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>No company linked</Text>
               ) : !companyDetail ? (

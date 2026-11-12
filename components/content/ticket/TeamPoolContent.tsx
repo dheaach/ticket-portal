@@ -5,13 +5,14 @@ import { DndContext, type DragEndEvent, DragOverlay, type DragStartEvent, Pointe
 import { Alert, Badge, Button, Empty, Flex, Input, Layout, message, Modal, Popover, Select, Space, Spin, Tag, Typography } from 'antd'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 import type { TicketTrackerStat } from '@/app/api/tickets/ticket-time-stats/route'
 import { SpaNavLink } from '@/components/common/SpaNavLink'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import { DEFAULT_ALL_STATUS_COLUMNS, type TicketRecord } from '@/components/ticket/list/types'
+import { loadLevel } from '@/lib/team-load-levels'
 
 dayjs.extend(relativeTime)
 
@@ -21,12 +22,16 @@ const { Title, Text } = Typography
 /** Only tickets still waiting for or in work are on the board. */
 const BOARD_STATUSES = 'open,received,working_team'
 const GREEN = '#52c41a'
+/** The statuses that count as work in progress for a person's load. */
+const ACTIVE_STATUSES = ['open', 'received', 'working_team']
 /** True for a moment after a drag ends, so releasing the card does not follow its link. */
 let justDragged = false
 /** "No assign" shows at most this many tickets; agent lanes always show everything they have. */
 const NO_ASSIGN_LIMIT = 50
 
-type CompanyOption = { id: string; name: string; is_customer?: boolean; plan_hours: number; spent_hours: number; has_active_timer: boolean }
+type CompanyOption = { id: string; name: string; is_customer?: boolean; plan_hours: number; spent_hours: number; has_active_timer: boolean; pics?: { user_id: string; name: string; role: string }[] }
+/** The people in charge of each company (by company id), so a ticket's hover can name them. */
+const PicsContext = createContext<Record<string, { user_id: string; name: string; role: string }[]>>({})
 type Agent = { id: string; name: string; position: string | null; shift_id: string | null }
 type ShiftOption = { id: string; title: string; start: string; end: string; crosses_midnight: boolean }
 type Lane = { key: string; title: string; subtitle?: string; tickets: TicketRecord[]; total?: number }
@@ -80,6 +85,76 @@ async function fetchTicketsPage(params: Record<string, string>): Promise<{ items
   return { items, total: Array.isArray(data) ? items.length : Number(data.total ?? items.length) }
 }
 
+type SuggestCandidate = {
+  id: string
+  full_name: string
+  eligible: boolean
+  match_pct: number | null
+  open_tickets: number
+  load_level: string
+  on_shift_now: boolean | null
+  reasons: string[]
+  concerns: string[]
+}
+
+/** On a ticket nobody holds: who could take it, ranked on skill, leave until the due date, shift and load. It only suggests; dragging the card assigns. */
+function SuggestButton({ ticketId }: { ticketId: number }) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [rows, setRows] = useState<SuggestCandidate[] | null>(null)
+  const [error, setError] = useState('')
+
+  const toggle = (next: boolean) => {
+    setOpen(next)
+    if (!next || rows || loading) return
+    setLoading(true)
+    setError('')
+    fetch(`/api/v1/team-load/suggest?ticket_id=${ticketId}&candidates=5`, { credentials: 'include' })
+      .then(async (r) => {
+        const j = (await r.json()) as { suggestions?: { candidates?: SuggestCandidate[] }[]; error?: string }
+        if (!r.ok) throw new Error(j.error || 'Could not load suggestions')
+        setRows(j.suggestions?.[0]?.candidates ?? [])
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  const content = (
+    <Flex vertical gap={8} style={{ width: 300 }}>
+      {loading ? <Spin size="small" /> : null}
+      {error ? <Text type="danger">{error}</Text> : null}
+      {rows && rows.length === 0 ? <Text type="secondary">Nobody to suggest.</Text> : null}
+      {(rows ?? []).map((c) => (
+        <div key={c.id}>
+          <Flex gap={6} align="center" wrap>
+            <Text strong>{c.full_name}</Text>
+            <Tag color={c.eligible ? 'green' : 'default'} style={{ margin: 0 }}>{c.eligible ? 'Can take it' : 'Not ideal'}</Tag>
+            {c.match_pct != null ? <Tag style={{ margin: 0 }}>Skill {c.match_pct}%</Tag> : null}
+            <Tag color={c.load_level === 'critical' ? 'red' : c.load_level === 'warning' ? 'orange' : 'default'} style={{ margin: 0 }}>{c.open_tickets} active</Tag>
+          </Flex>
+          {c.concerns.slice(0, 2).map((x) => <div key={x}><Text type="secondary" style={{ fontSize: 12 }}>{x}</Text></div>)}
+        </div>
+      ))}
+      <Text type="secondary" style={{ fontSize: 11 }}>Only a suggestion: drag the card to a person to assign it.</Text>
+    </Flex>
+  )
+
+  return (
+    <Popover content={content} title="Who could take this?" trigger="click" open={open} onOpenChange={toggle} placement="right">
+      <Button
+        size="small"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+        }}
+      >
+        Suggest
+      </Button>
+    </Popover>
+  )
+}
+
 function StatusChip({ status }: { status: string }) {
   const col = DEFAULT_ALL_STATUS_COLUMNS.find((c) => c.id === status)
   return (
@@ -93,11 +168,13 @@ function StatusChip({ status }: { status: string }) {
 function TicketCard({ t, stat, hint, highlight }: { t: TicketRecord; stat?: TicketTrackerStat; hint?: React.ReactNode; highlight?: boolean }) {
   const active = stat?.active_trackers ?? []
   const isActive = active.length > 0
+  const pics = useContext(PicsContext)[t.company?.id ?? ''] ?? []
 
   const detail = (
     <Flex vertical gap={6} style={{ width: 320 }}>
       <Text strong>#{t.id} {t.title}</Text>
       <Text type="secondary">{[t.company?.name, t.type?.title, t.team_name].filter(Boolean).join(' · ') || 'No company'}</Text>
+      {t.company?.id ? <Text>PIC: {pics.length ? pics.map((p) => (p.role === 'primary' ? `${p.name} (primary)` : p.name)).join(', ') : 'none set'}</Text> : null}
       <Text>Assigned to: {(t.assignees ?? []).map((a) => a.user_name).filter(Boolean).join(', ') || 'nobody'}</Text>
       <Text>Last update: {dayjs(t.updated_at).fromNow()} <Text type="secondary">({dayjs(t.updated_at).format('MMM DD, HH:mm')})</Text></Text>
       <Text>Created: {dayjs(t.created_at).format('MMM DD, YYYY HH:mm')}</Text>
@@ -158,6 +235,9 @@ function TicketCard({ t, stat, hint, highlight }: { t: TicketRecord; stat?: Tick
 
 /** Top of a person's lane: who, duty/leave, shift, and where they are working right now. */
 function PersonHeader({ lane, agent, shift, status, count }: { lane: Lane; agent?: Agent; shift?: ShiftOption; status?: PersonStatus; count: number }) {
+  // Load is counted on active tickets (Open, Received, Working Team): orange from 6, red from 10.
+  const level = loadLevel(lane.tickets.filter((t) => ACTIVE_STATUSES.includes(t.status)).length)
+  const levelColor = level === 'critical' ? '#ff4d4f' : level === 'warning' ? '#fa8c16' : null
   const duty = status?.reason ? DUTY[status.reason] ?? { label: status.reason, color: 'default' } : null
   const active = status?.active ?? []
   const start = wibTime(status?.shift_start ?? null)
@@ -188,7 +268,7 @@ function PersonHeader({ lane, agent, shift, status, count }: { lane: Lane; agent
           borderRadius: 12,
           padding: '10px 12px',
           background: isActive ? '#f6ffed' : 'var(--kanban-column-bg, #fafafa)',
-          border: isActive ? `2px solid ${GREEN}` : '1px solid #e8e8e8',
+          border: levelColor ? `2px solid ${levelColor}` : isActive ? `2px solid ${GREEN}` : '1px solid #e8e8e8',
         }}
       >
         <Flex justify="space-between" align="center" gap={6}>
@@ -196,7 +276,11 @@ function PersonHeader({ lane, agent, shift, status, count }: { lane: Lane; agent
             <Text strong style={{ fontSize: 14 }}>{lane.title.split(' ')[0]}</Text>
             {lane.subtitle ? <Text type="secondary" style={{ fontSize: 11 }}> · {lane.subtitle}</Text> : null}
           </Text>
-          <Tag color={duty?.color ?? 'default'} style={{ margin: 0, flexShrink: 0 }}>
+          <Tag
+            color={level === 'critical' ? 'red' : level === 'warning' ? 'orange' : (duty?.color ?? 'default')}
+            style={{ margin: 0, flexShrink: 0 }}
+            title={level === 'normal' ? undefined : level === 'critical' ? '10 or more active tickets' : '6 or more active tickets'}
+          >
             {duty ? `${duty.label}: ${count}` : count}
           </Tag>
         </Flex>
@@ -243,6 +327,7 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
   const [companies, setCompanies] = useState<CompanyOption[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [shifts, setShifts] = useState<ShiftOption[]>([])
+  const [teamGroups, setTeamGroups] = useState<{ id: string; name: string; user_ids: string[] }[]>([])
   const [everyone, setEveryone] = useState<Record<string, PersonStatus>>({})
   const [companyIds, setCompanyIds] = useState<string[]>([])
   const [agentIds, setAgentIds] = useState<string[]>([])
@@ -263,6 +348,10 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
       .then((r) => (r.ok ? r.json() : { companies: [] }))
       .then((j: { companies?: CompanyOption[] }) => setCompanies(j.companies ?? []))
       .catch(() => setCompanies([]))
+    fetch('/api/board/team-members', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { teams: [] }))
+      .then((j: { teams?: { id: string; name: string; user_ids: string[] }[] }) => setTeamGroups(j.teams ?? []))
+      .catch(() => setTeamGroups([]))
     fetch('/api/shifts', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : []))
       .then((rows: ShiftOption[]) => setShifts(Array.isArray(rows) ? rows : []))
@@ -272,7 +361,7 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
       .then((rows: { id: string; full_name?: string | null; email: string; position?: string | null; role?: string | null; status?: string | null; shift_id?: string | null }[]) =>
         setAgents(
           (Array.isArray(rows) ? rows : [])
-            .filter((u) => ['admin', 'manager', 'staff'].includes((u.role ?? '').toLowerCase()) && (u.status ?? 'active') === 'active')
+            .filter((u) => ['admin', 'operations', 'manager', 'staff'].includes((u.role ?? '').toLowerCase()) && (u.status ?? 'active') === 'active')
             .map((u) => ({ id: u.id, name: u.full_name || u.email, position: u.position ?? null, shift_id: u.shift_id ?? null }))
             .sort((a, b) => a.name.localeCompare(b.name))
         )
@@ -301,11 +390,17 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
       }
       return [...m.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([label, ids]) => ({ label, ids }))
     }
+    // A team lists only the agents shown in the pool (active staff); a team with none of them is left out.
+    const agentIdSet = new Set(agents.map((a) => a.id))
+    const teamList = teamGroups
+      .map((t) => ({ label: t.name, ids: t.user_ids.filter((id) => agentIdSet.has(id)) }))
+      .filter((t) => t.ids.length > 0)
     return {
       positions: build((a) => a.position?.trim() || null),
       shifts: build((a) => shifts.find((x) => x.id === a.shift_id)?.title ?? null),
+      teams: teamList,
     }
-  }, [agents, shifts])
+  }, [agents, shifts, teamGroups])
 
   /** Adds the whole group to the selection, or removes it again when every member is already selected. */
   const toggleGroup = (ids: string[]) =>
@@ -511,7 +606,18 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
     return <Tag color={pct === 100 ? 'green' : pct >= 50 ? 'gold' : 'default'} style={{ margin: 0 }}>Skill match {pct}%</Tag>
   }
 
+  const picsMap = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c.pics ?? []])), [companies])
+  /** The companies where the signed-in person is a PIC. */
+  const myPicCompanyIds = useMemo(() => companies.filter((c) => (c.pics ?? []).some((p) => p.user_id === currentUser.id)).map((c) => c.id), [companies, currentUser.id])
+  const myPicSelected = myPicCompanyIds.length > 0 && companyIds.length === myPicCompanyIds.length && myPicCompanyIds.every((id) => companyIds.includes(id))
+  const toggleMyPicCompanies = () => {
+    if (myPicSelected) return setCompanyIds([])
+    if (myPicCompanyIds.length === 0) return void message.info('You are not the PIC of any company yet')
+    setCompanyIds(myPicCompanyIds)
+  }
+
   return (
+    <PicsContext.Provider value={picsMap}>
     <Layout style={{ minHeight: '100vh' }}>
       <AdminSidebar user={{ ...currentUser, role: currentUser.role ?? undefined }} collapsed={collapsed} onCollapse={setCollapsed} />
       <AdminMainColumn collapsed={collapsed} user={currentUser}>
@@ -553,6 +659,9 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
                   }}
                 />
               </div>
+              <Button type={myPicSelected ? 'primary' : 'default'} disabled={!!activeSearch} onClick={toggleMyPicCompanies}>
+                My companies (PIC)
+              </Button>
               <div style={{ minWidth: 280, flex: 1 }}>
                 <Select
                   mode="multiple"
@@ -605,7 +714,7 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
               <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>Reload</Button>
             </Flex>
 
-            {quickGroups.positions.length + quickGroups.shifts.length > 0 ? (
+            {quickGroups.positions.length + quickGroups.shifts.length + quickGroups.teams.length > 0 ? (
               <Flex gap={6} wrap align="center">
                 <Text type="secondary" style={{ fontSize: 12 }}>Quick select:</Text>
                 {quickGroups.positions.map((g) => (
@@ -617,6 +726,12 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
                 {quickGroups.shifts.map((g) => (
                   <Tag.CheckableTag key={`s-${g.label}`} checked={g.ids.every((id) => agentIds.includes(id))} onChange={() => toggleGroup(g.ids)}>
                     Shift {g.label} ({g.ids.length})
+                  </Tag.CheckableTag>
+                ))}
+                {quickGroups.teams.length > 0 && quickGroups.positions.length + quickGroups.shifts.length > 0 ? <Text type="secondary">|</Text> : null}
+                {quickGroups.teams.map((g) => (
+                  <Tag.CheckableTag key={`t-${g.label}`} checked={g.ids.every((id) => agentIds.includes(id))} onChange={() => toggleGroup(g.ids)}>
+                    Team {g.label} ({g.ids.length})
                   </Tag.CheckableTag>
                 ))}
                 {agentIds.length > 0 ? (
@@ -667,7 +782,7 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
                               <TicketCard
                                 t={t}
                                 stat={stats.get(t.id)}
-                                hint={isPool ? bestFit(t) : fitFor(t, lane.key)}
+                                hint={isPool ? <Flex gap={6} align="center" wrap>{bestFit(t)}<SuggestButton ticketId={t.id} /></Flex> : fitFor(t, lane.key)}
                                 highlight={t.id === highlightId}
                               />
                             </DraggableTicket>
@@ -691,5 +806,6 @@ export default function TeamPoolContent({ user: currentUser }: { user: { id: str
         </Content>
       </AdminMainColumn>
     </Layout>
+    </PicsContext.Provider>
   )
 }

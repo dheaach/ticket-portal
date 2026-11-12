@@ -1,12 +1,16 @@
 import { eq } from 'drizzle-orm'
 
+import { captureAfterCrawl } from '@/lib/crawl-auto-screenshots'
+import { alertNewExternalLinks } from '@/lib/crawl-external-alerts'
 import { db } from '@/lib/db'
 import { companyWebsites, crawlPages, crawlSessions } from '@/lib/db/schema'
 
 // Normalize URL to avoid duplicate crawling (normalize trailing slash)
+// The #fragment is never part of the page: /who-we-help/#practices and /who-we-help/#small are the same page.
 // For root URLs (e.g., https://example.com/ and https://example.com), always use with trailing slash
 // For other URLs, remove trailing slash
 export function normalizeUrl(url: string): string {
+  url = url.replace(/#.*$/, '')
   try {
     const urlObj = new URL(url)
     // For root URLs (pathname is '/' or empty), always use with trailing slash
@@ -324,8 +328,11 @@ export async function startCrawlProcess(
       // Extract links (simplified)
       const linkMatches = html.matchAll(/<a[^>]*href=["']([^"']+)["'][^>]*>/gi)
       const links: string[] = []
+      const externalLinks: Array<{ url: string; text: string; tag: string }> = []
       for (const match of linkMatches) {
-        let linkUrl = match[1]
+        // The part after # only points inside the page, so the page address ends before it.
+        let linkUrl = match[1].replace(/#.*$/, '')
+        if (!linkUrl) continue
         // Convert relative URLs to absolute
         if (linkUrl.startsWith('/')) {
           try {
@@ -344,9 +351,21 @@ export async function startCrawlProcess(
           const linkDomain = new URL(linkUrl).hostname
           // Normalize link URL for duplicate checking
           const normalizedLinkUrl = normalizeUrl(linkUrl)
-          if (linkDomain === currentDomain && !visitedUrls.has(normalizedLinkUrl) && depth < maxDepth) {
-            links.push(linkUrl)
-            queue.push({ url: linkUrl, depth: depth + 1 })
+          if (linkDomain !== currentDomain && linkDomain.replace(/^www\./, '') !== currentDomain.replace(/^www\./, '')) {
+            // A link to another site, kept for a person to review (the first sign of an inserted backlink).
+            if (externalLinks.length < 200 && /^https?:$/.test(new URL(linkUrl).protocol) && !externalLinks.some((l) => l.url === linkUrl)) {
+              const rel = (match[0].match(/\brel=["']([^"']*)["']/i)?.[1] ?? '').toLowerCase().split(/\s+/).filter((r) => ['nofollow', 'sponsored', 'ugc'].includes(r))
+              const after = html.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 400)
+              const text = after.split(/<\/a>/i)[0].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 120)
+              externalLinks.push({ url: linkUrl, text, tag: rel.length ? `external:${rel.join(',')}` : 'external' })
+            }
+          }
+          if (linkDomain === currentDomain) {
+            // Every internal link is kept (once per page) so a broken page can be traced to the pages that link to it.
+            if (!links.includes(linkUrl)) links.push(linkUrl)
+            if (!visitedUrls.has(normalizedLinkUrl) && depth < maxDepth) {
+              queue.push({ url: linkUrl, depth: depth + 1 })
+            }
           }
         } catch {
           continue
@@ -475,6 +494,7 @@ export async function startCrawlProcess(
           headingHierarchy: headingHierarchy,
           metaTags: metaTags,
           links: links,
+          externalLinks: externalLinks.length ? externalLinks : null,
           errorMessage: isRedirect ? redirectInfo : null,
           crawledAt: new Date(),
         })
@@ -600,5 +620,16 @@ export async function startCrawlProcess(
   }
   
   console.log(`[Crawl] Session ${sessionId} completed successfully`)
+
+  // A failed alert never turns a finished crawl into a failed one.
+  try {
+    const alert = await alertNewExternalLinks(sessionId)
+    if (alert.newLinks > 0) console.log(`[Crawl] ${alert.newLinks} new external link(s), ${alert.sent} PIC(s) emailed`)
+  } catch (alertError) {
+    console.error('[Crawl] Could not check for new external links:', alertError)
+  }
+
+  // Pictures the person asked for when starting the crawl run on their own, after the crawl is already finished.
+  void captureAfterCrawl(sessionId).catch((shotError) => console.error('[Crawl] Could not take the screenshots after the crawl:', shotError))
 }
 

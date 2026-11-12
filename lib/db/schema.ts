@@ -69,7 +69,7 @@ export const companies = pgTable('companies', {
   color: varchar('color', { length: 20 }).default('#000000'),
   activeTeamId: uuid('active_team_id'),
   activeManagerId: uuid('active_manager_id'),
-  activeTime: integer('active_time').notNull().default(0),
+  activeTime: numeric('active_time', { precision: 7, scale: 2, mode: 'number' }).notNull().default(0),
   /** Manual position of the customer in Round Robin and reports (1 = first). Null = after all numbered ones. */
   displayOrder: integer('display_order'),
   isCustomer: boolean('is_customer').notNull().default(false),
@@ -89,7 +89,7 @@ export const companyDailyActiveAssignments = pgTable(
     snapshotDate: date('snapshot_date').notNull(),
     activeTeamId: uuid('active_team_id'),
     activeManagerId: uuid('active_manager_id'),
-    activeTime: integer('active_time').notNull().default(0),
+    activeTime: numeric('active_time', { precision: 7, scale: 2, mode: 'number' }).notNull().default(0),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
@@ -358,6 +358,10 @@ export const ticketComments = pgTable('ticket_comments', {
   editedAt: ts('edited_at'),
   /** Set when this reply was split into its own ticket (the reply stays, marked "Split to #N"). */
   splitToTicketId: integer('split_to_ticket_id'),
+  /** 'api' when written through the API; null for comments made in the app. */
+  source: varchar('source', { length: 16 }),
+  /** For API comments: the assistant that wrote it (Claude, ChatGPT, ...), as it named itself. */
+  sourceLabel: varchar('source_label', { length: 60 }),
 })
 
 /** One saved AI summary per anchor (per comment, description, or ticket header). */
@@ -568,6 +572,10 @@ export const crawlSessions = pgTable('crawl_sessions', {
   errorMessage: text('error_message'),
   maxDepth: integer('max_depth').default(3),
   maxPages: integer('max_pages').default(100),
+  /** Who started it (the pictures taken after the crawl are saved under their name). */
+  startedBy: uuid('started_by'),
+  screenshotHomepage: boolean('screenshot_homepage').notNull().default(false),
+  screenshotRandomCount: integer('screenshot_random_count').notNull().default(0),
   startedAt: ts('started_at'),
   completedAt: ts('completed_at'),
   createdAt: ts('created_at').notNull().defaultNow(),
@@ -588,6 +596,7 @@ export const crawlPages = pgTable('crawl_pages', {
   headingHierarchy: jsonb('heading_hierarchy'),
   metaTags: jsonb('meta_tags'),
   links: jsonb('links'),
+  externalLinks: jsonb('external_links').$type<Array<{ url: string; text: string; tag: string }>>(),
   crawledAt: ts('crawled_at'),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
@@ -863,6 +872,31 @@ export const recurringTickets = pgTable('recurring_tickets', {
   updatedAt: ts('updated_at').notNull().defaultNow(),
 })
 
+/** Website crawls that start on their own, on the same kind of schedule as recurring tickets. */
+export const crawlSchedules = pgTable('crawl_schedules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyWebsiteId: uuid('company_website_id').notNull(),
+  frequency: varchar('frequency', { length: 32 }).notNull().default('specific_days'),
+  specificDays: jsonb('specific_days').$type<number[]>(),
+  specificDate: jsonb('specific_date').$type<number[]>(),
+  intervalDays: integer('interval_days'),
+  timeOfDay: varchar('time_of_day', { length: 5 }).notNull().default('02:00'),
+  timezone: varchar('timezone', { length: 64 }).notNull().default('Asia/Jakarta'),
+  startDate: date('start_date').notNull(),
+  endDate: date('end_date'),
+  maxDepth: integer('max_depth').notNull().default(3),
+  maxPages: integer('max_pages').notNull().default(100),
+  notifyEmails: jsonb('notify_emails').$type<string[]>().notNull().default([]),
+  isActive: boolean('is_active').notNull().default(true),
+  lastRunAt: ts('last_run_at'),
+  nextRunAt: ts('next_run_at'),
+  lastSessionId: uuid('last_session_id'),
+  lastNewBroken: integer('last_new_broken'),
+  createdBy: uuid('created_by'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+})
+
 /** Append-only log of every ticket created by a recurring rule. */
 export const recurringTicketRuns = pgTable(
   'recurring_ticket_runs',
@@ -980,6 +1014,133 @@ export const userSkills = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.skillId] })]
 )
 
+/** The team calendar's own entries: birthday, holiday, leave, duty or other event; may repeat every year. */
+export const calendarEvents = pgTable(
+  'calendar_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    type: varchar('type', { length: 20 }).notNull().default('event'),
+    title: varchar('title', { length: 200 }).notNull(),
+    startDate: date('start_date').notNull(),
+    endDate: date('end_date').notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    repeatYearly: boolean('repeat_yearly').notNull().default(false),
+    notes: text('notes'),
+    createdBy: uuid('created_by'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('calendar_events_range_idx').on(t.startDate, t.endDate)]
+)
+
+/** The Google account a person connected to push calendar entries to their own Google Calendar. */
+export const googleCalendarConnections = pgTable('google_calendar_connections', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  googleEmail: varchar('google_email', { length: 255 }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  expiresAt: ts('expires_at'),
+  calendarId: varchar('calendar_id', { length: 255 }).notNull().default('primary'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+})
+
+/** Which Google event an entry became in whose calendar, so edits and deletes can follow. */
+export const calendarGoogleLinks = pgTable(
+  'calendar_google_links',
+  {
+    eventId: uuid('event_id').notNull().references(() => calendarEvents.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    googleEventId: text('google_event_id').notNull(),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.userId] })]
+)
+
+/** API keys people make for scripts and AI assistants; only the hash is stored. `scopes` is what the key may use. */
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 120 }).notNull(),
+    keyPrefix: varchar('key_prefix', { length: 16 }).notNull(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+    scopes: jsonb('scopes').$type<string[]>().notNull().default([]),
+    expiresAt: ts('expires_at'),
+    isActive: boolean('is_active').notNull().default(true),
+    rateLimitPerHour: integer('rate_limit_per_hour').notNull().default(100),
+    lastUsedAt: ts('last_used_at'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('api_keys_user_idx').on(t.userId)]
+)
+
+/** Every call made with an API key, including refused ones (with the reason). */
+export const apiKeyUsage = pgTable(
+  'api_key_usage',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    keyId: uuid('key_id').notNull().references(() => apiKeys.id, { onDelete: 'cascade' }),
+    method: varchar('method', { length: 8 }).notNull(),
+    path: varchar('path', { length: 200 }).notNull(),
+    allowed: boolean('allowed').notNull().default(true),
+    deniedReason: varchar('denied_reason', { length: 40 }),
+    ip: varchar('ip', { length: 64 }),
+    userAgent: varchar('user_agent', { length: 200 }),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('api_key_usage_key_idx').on(t.keyId, t.createdAt), index('api_key_usage_created_idx').on(t.createdAt)]
+)
+
+/** "My Filters" on the tickets page: a name and the filter query string, one of them can be the default view. */
+export const ticketSavedFilters = pgTable(
+  'ticket_saved_filters',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    query: text('query').notNull().default(''),
+    isDefault: boolean('is_default').notNull().default(false),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('ticket_saved_filters_user_idx').on(t.userId, t.createdAt)]
+)
+
+/** A staff member's own sidebar: item order and hidden items (differences from the default only). */
+export const userMenuPreferences = pgTable('user_menu_preferences', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  itemOrder: jsonb('item_order').$type<string[]>().notNull().default([]),
+  hiddenItems: jsonb('hidden_items').$type<string[]>().notNull().default([]),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+})
+
+/** People in charge of a customer company: several allowed, one primary. */
+export const companyPics = pgTable(
+  'company_pics',
+  {
+    companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 16 }).notNull().default('secondary'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.userId] })]
+)
+
+/** Log of every skill level change: old_level null = skill added, new_level null = skill removed. */
+export const userSkillHistory = pgTable(
+  'user_skill_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+    oldLevel: integer('old_level'),
+    newLevel: integer('new_level'),
+    changedBy: uuid('changed_by'),
+    changedAt: ts('changed_at').notNull().defaultNow(),
+  },
+  (t) => [index('user_skill_history_user_idx').on(t.userId, t.changedAt)]
+)
+
 /** Skills a ticket needs (starts from the company + type defaults, editable per ticket). */
 export const ticketSkills = pgTable(
   'ticket_skills',
@@ -1033,4 +1194,92 @@ export const userCompanyChanges = pgTable(
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [index('user_company_changes_user_idx').on(t.userId, t.createdAt)]
+)
+
+/** OAuth clients registered by MCP apps such as ChatGPT (dynamic client registration). Public clients: no secret, PKCE instead. */
+export const oauthClients = pgTable('oauth_clients', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 120 }).notNull(),
+  redirectUris: jsonb('redirect_uris').$type<string[]>().notNull().default([]),
+  createdAt: ts('created_at').notNull().defaultNow(),
+})
+
+/** A single-use authorization code, kept for minutes. Only its hash is stored. */
+export const oauthCodes = pgTable('oauth_codes', {
+  codeHash: varchar('code_hash', { length: 64 }).primaryKey(),
+  clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  scopes: jsonb('scopes').$type<string[]>().notNull().default([]),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: varchar('code_challenge', { length: 128 }).notNull(),
+  expiresAt: ts('expires_at').notNull(),
+})
+
+/** One connection of an app to a person: owns the api_keys row used as the access token, and the refresh token's hash. */
+export const oauthGrants = pgTable(
+  'oauth_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    keyId: uuid('key_id').notNull().unique().references(() => apiKeys.id, { onDelete: 'cascade' }),
+    refreshHash: varchar('refresh_hash', { length: 64 }).notNull(),
+    refreshExpiresAt: ts('refresh_expires_at').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('oauth_grants_refresh_idx').on(t.refreshHash)]
+)
+
+// ============ WordPress monitoring (wp-plugin) ============
+export const wpSites = pgTable('wp_sites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Normalised site URL (lowercase, no trailing slash); the plugin sends it in X-DT360-Site. */
+  siteUrl: text('site_url').notNull().unique(),
+  name: varchar('name', { length: 255 }),
+  companyId: uuid('company_id').references(() => companies.id, { onDelete: 'set null' }),
+  /** Shared secret for the HMAC signature; shown once when the site is registered. */
+  secretKey: text('secret_key').notNull(),
+  wpVersion: varchar('wp_version', { length: 50 }),
+  phpVersion: varchar('php_version', { length: 50 }),
+  lastReport: jsonb('last_report'),
+  lastSeenAt: ts('last_seen_at'),
+  /** This server's own check of the site (not the plugin's report), so a site that is down shows even though it cannot report. */
+  uptimeOk: boolean('uptime_ok'),
+  uptimeStatus: integer('uptime_status'),
+  uptimeMs: integer('uptime_ms'),
+  uptimeCheckedAt: ts('uptime_checked_at'),
+  uptimeFailCount: integer('uptime_fail_count').notNull().default(0),
+  uptimeDownSince: ts('uptime_down_since'),
+  /** No notifications until then (planned maintenance). */
+  snoozedUntil: ts('snoozed_until'),
+  /** Signature of the last accepted report, so the same signed request cannot be replayed. */
+  lastSignature: varchar('last_signature', { length: 64 }),
+  createdAt: ts('created_at').notNull().defaultNow(),
+})
+
+export const wpSiteReports = pgTable(
+  'wp_site_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    siteId: uuid('site_id').notNull().references(() => wpSites.id, { onDelete: 'cascade' }),
+    payload: jsonb('payload').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('wp_site_reports_site_created_idx').on(t.siteId, t.createdAt)],
+)
+
+/** One alarm of one kind on one site: opened when the condition appears, cleared when it is gone, never repeated while open. */
+export const wpSiteAlarms = pgTable(
+  'wp_site_alarms',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    siteId: uuid('site_id').notNull().references(() => wpSites.id, { onDelete: 'cascade' }),
+    code: varchar('code', { length: 40 }).notNull(),
+    level: varchar('level', { length: 10 }).notNull(),
+    message: text('message').notNull(),
+    openedAt: ts('opened_at').notNull().defaultNow(),
+    clearedAt: ts('cleared_at'),
+    notifiedAt: ts('notified_at'),
+  },
+  (t) => [index('wp_site_alarms_site_idx').on(t.siteId, t.openedAt)]
 )

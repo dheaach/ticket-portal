@@ -213,7 +213,10 @@ function getInitialViewModeCustomer(isCustomer: boolean, stored: StoredFilter | 
   return storedMode || 'kanban'
 }
 
-export function useTicketsData(currentUserId: string, isCustomer = false, canDeleteTicket = false) {
+/** The statuses My Tickets shows. */
+const MY_TICKETS_STATUSES = ['open', 'received', 'working_team']
+
+export function useTicketsData(currentUserId: string, isCustomer = false, canDeleteTicket = false, mineOnly = false) {
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()
@@ -405,7 +408,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
   const pageKey = isPagedView ? `${listPage}:${listPageSize}:${listSort.sortBy}:${listSort.sortOrder}` : ''
   const effectiveTicketsLimit = ticketsPageLimit
 
-  const ticketsListQueryKey = useMemo(
+  const baseListQueryKey = useMemo(
     () =>
       buildTicketsListQueryKey({
         isCustomer,
@@ -441,6 +444,9 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     ]
   )
 
+  // My Tickets keeps its own cache, apart from All tickets.
+  const ticketsListQueryKey = useMemo(() => (mineOnly ? ([...baseListQueryKey, 'mine'] as unknown as typeof baseListQueryKey) : baseListQueryKey), [baseListQueryKey, mineOnly])
+
   // Any filter, search or sort change starts List/Card from page 1.
   const listResetKey = JSON.stringify([ticketsListQueryKey[2], listPageSize, listSort]).replace(/"pageKey":"[^"]*"/, '')
   const prevListResetKeyRef = useRef(listResetKey)
@@ -474,6 +480,7 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
       const inJunkFolder =
         !isCustomer && (filterTicketType === 'spam' || filterTicketType === 'trash')
       if (inJunkFolder) params.set('ticket_type', filterTicketType!)
+      if (mineOnly && !isCustomer) params.set('assignee_ids', currentUserId)
       if (isCustomer) {
         const customerCompanyIds = filterCompanyIds.filter((id) => id !== '__none__')
         if (customerCompanyIds.length > 0) params.set('company_ids', customerCompanyIds.join(','))
@@ -866,8 +873,29 @@ export function useTicketsData(currentUserId: string, isCustomer = false, canDel
     statusColumns,
   ])
 
+  /**
+   * My Tickets always shows Open, Received and Working Team and has no filters: whatever the filter state holds
+   * (stored filters, lookups finishing late) is put back to that.
+   */
+  useEffect(() => {
+    if (!mineOnly || isCustomer || allStatuses.length === 0) return
+    const wanted = MY_TICKETS_STATUSES.filter((slug) => allStatuses.some((s) => s.slug === slug))
+    setFilterStatus((prev) => (prev.length === wanted.length && prev.every((s, i) => s === wanted[i]) ? prev : wanted))
+    setFilterTypeIds((prev) => (prev.length ? [] : prev))
+    setFilterCompanyIds((prev) => (prev.length ? [] : prev))
+    setFilterTagIds((prev) => (prev.length ? [] : prev))
+    setFilterTeamIds((prev) => (prev.length ? [] : prev))
+    setFilterDateRange((prev) => (prev ? null : prev))
+    setFilterDueDateRange((prev) => (prev ? null : prev))
+  }, [mineOnly, isCustomer, allStatuses, filterStatus, filterTypeIds, filterCompanyIds, filterTagIds, filterTeamIds, filterDateRange, filterDueDateRange])
+
   /** On every filter change: save to localStorage + update URL (so link can be shared) */
   useEffect(() => {
+    // My Tickets has fixed filters; only its view mode is remembered, so All tickets keeps the person's own filters.
+    if (mineOnly) {
+      saveFiltersToStorage({ ...(loadFiltersFromStorage() ?? {}), viewMode } as StoredFilter)
+      return
+    }
     saveFiltersToStorage({
       filterStatus,
       filterTypeIds,

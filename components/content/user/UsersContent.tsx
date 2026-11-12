@@ -42,6 +42,7 @@ import { type Key,useEffect, useMemo, useState } from 'react'
 import { createUser } from '@/app/actions/users'
 import AppTable from '@/components/common/AppTable'
 import { APP_TABLE_PAGE_SIZE_OPTIONS, appTableShowTotal } from '@/lib/app-table'
+import { TIMEZONE_OPTIONS } from '@/lib/timezones'
 import { USER_DEPARTMENTS, USER_POSITIONS } from '@/lib/user-work-dropdowns'
 import { uploadAvatar } from '@/utils/storage'
 
@@ -60,13 +61,15 @@ import { shouldOpenHrefInNewTab,SpaNavLink } from '@/components/common/SpaNavLin
 import { confirmUserCompanyMove } from '@/components/company/confirm-user-company-move'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
+import ViewAsButton, { canViewAs } from '@/components/user/ViewAsButton'
+import { isUserInactive } from '@/lib/user-status'
 
 const { Content } = Layout
 const { Title, Text } = Typography
 const { Option } = Select
 const { TextArea } = Input
 
-type UserAudienceTab = 'customer' | 'non_customer'
+type UserAudienceTab = 'customer' | 'non_customer' | 'inactive'
 
 interface UsersContentProps {
   user: { id: string; email?: string | null; name?: string | null; role?: string }
@@ -102,7 +105,7 @@ type ShiftOption = { id: string; title: string; start: string; end: string; cros
 export default function UsersContent({ user: currentUser }: UsersContentProps) {
   const router = useRouter()
   const isCustomer = ((currentUser as { role?: string }).role ?? '').toLowerCase() === 'customer'
-  const isAdmin = ((currentUser as { role?: string }).role ?? '').toLowerCase() === 'admin'
+  const isAdmin = ['admin', 'operations'].includes(((currentUser as { role?: string }).role ?? '').toLowerCase())
   const [collapsed, setCollapsed] = useState(false)
   const [users, setUsers] = useState<UserRecord[]>([])
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
@@ -166,8 +169,14 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
         if (!matchesSearch) return false
       }
       if (!isCustomer) {
-        if (audienceTab === 'customer' && u.role !== 'customer') return false
-        if (audienceTab === 'non_customer' && u.role === 'customer') return false
+        // Inactive people have their own tab (any role); the other tabs only hold active people.
+        if (audienceTab === 'inactive') {
+          if (!isUserInactive(u.status)) return false
+        } else {
+          if (isUserInactive(u.status)) return false
+          if (audienceTab === 'customer' && u.role !== 'customer') return false
+          if (audienceTab === 'non_customer' && u.role === 'customer') return false
+        }
       }
       if (filterStatus && u.status !== filterStatus) return false
       if (filterRole && u.role !== filterRole) return false
@@ -211,13 +220,14 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
     }
   }, [filterSkill, filterSkillLevel])
 
-  const customerCount = useMemo(() => users.filter((u) => u.role === 'customer').length, [users])
-  const nonCustomerCount = useMemo(() => users.filter((u) => u.role !== 'customer').length, [users])
+  const customerCount = useMemo(() => users.filter((u) => u.role === 'customer' && !isUserInactive(u.status)).length, [users])
+  const nonCustomerCount = useMemo(() => users.filter((u) => u.role !== 'customer' && !isUserInactive(u.status)).length, [users])
+  const inactiveCount = useMemo(() => users.filter((u) => isUserInactive(u.status)).length, [users])
 
   const fetchUsers = async () => {
     setLoading(true)
     try {
-      const data = await apiFetch<any[]>('/api/users')
+      const data = await apiFetch<any[]>('/api/users?include_inactive=1')
       setUsers(data || [])
     } catch (error: any) {
       message.error(error.message || 'Failed to fetch users')
@@ -250,29 +260,6 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
       timezone: 'UTC',
       locale: 'en',
       is_email_verified: false,
-    })
-    setModalVisible(true)
-  }
-
-  const handleEdit = (record: UserRecord) => {
-    setEditingUser(record)
-    setAvatarUrl(record.avatar_url)
-    form.setFieldsValue({
-      email: record.email,
-      first_name: record.first_name || '',
-      last_name: record.last_name || '',
-      full_name: record.full_name || '',
-      role: record.role,
-      status: record.status,
-      company_id: record.company_id || undefined,
-      extra_company_ids: record.extra_company_ids ?? [],
-      phone: record.phone || '',
-      department: record.department || '',
-      position: record.position || '',
-      bio: record.bio || '',
-      timezone: record.timezone || 'UTC',
-      locale: record.locale || 'en',
-      is_email_verified: record.is_email_verified || false,
     })
     setModalVisible(true)
   }
@@ -725,9 +712,10 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
               type="primary"
               icon={<EditOutlined />}
 
-              onClick={() => handleEdit(record)}
+              onClick={() => router.push(`/settings/users/${record.id}?edit=1`)}
             />
           </Tooltip>
+          {canViewAs((currentUser as { role?: string }).role, record.role) ? <ViewAsButton userId={record.id} userName={record.full_name} iconOnly /> : null}
           {isAdmin && record.role === 'customer' && (
             <Tooltip title="Send reset password email">
               <Button
@@ -856,7 +844,8 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                     style={{ width: 150 }}
                   >
                     <Option value="admin">Admin</Option>
-                    <Option value="manager">Manager</Option>
+                    <Option value="operations">Operations</Option>
+<Option value="manager">Team Leader / PIC</Option>
                     <Option value="staff">Staff</Option>
                   </Select>
                 )}
@@ -917,6 +906,10 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                   {
                     key: 'non_customer',
                     label: <span title="Admin, manager, staff — internal Deskteam roles">Agents & staff ({nonCustomerCount})</span>,
+                  },
+                  {
+                    key: 'inactive',
+                    label: <span title="Switched off or suspended. They cannot be picked anywhere else.">Inactive ({inactiveCount})</span>,
                   },
                 ]}
                 style={{ marginBottom: 16 }}
@@ -1200,7 +1193,8 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                       >
                         <Select placeholder="Select Role">
                           <Option value="admin">Admin</Option>
-                          <Option value="manager">Manager</Option>
+                          <Option value="operations">Operations</Option>
+<Option value="manager">Team Leader / PIC</Option>
                           <Option value="staff">Staff</Option>
                           <Option value="customer">Customer</Option>
                         </Select>
@@ -1304,19 +1298,7 @@ export default function UsersContent({ user: currentUser }: UsersContentProps) {
                     name="timezone"
                     label="Timezone"
                   >
-                    <Select placeholder="Select Timezone" showSearch>
-                      <Option value="UTC">UTC</Option>
-                      <Option value="America/New_York">America/New_York (EST)</Option>
-                      <Option value="America/Chicago">America/Chicago (CST)</Option>
-                      <Option value="America/Denver">America/Denver (MST)</Option>
-                      <Option value="America/Los_Angeles">America/Los_Angeles (PST)</Option>
-                      <Option value="Europe/London">Europe/London (GMT)</Option>
-                      <Option value="Europe/Paris">Europe/Paris (CET)</Option>
-                      <Option value="Asia/Tokyo">Asia/Tokyo (JST)</Option>
-                      <Option value="Asia/Shanghai">Asia/Shanghai (CST)</Option>
-                      <Option value="Asia/Jakarta">Asia/Jakarta (WIB)</Option>
-                      <Option value="Asia/Singapore">Asia/Singapore (SGT)</Option>
-                    </Select>
+                    <Select options={TIMEZONE_OPTIONS} placeholder="Select Timezone" showSearch />
                   </Form.Item>
                 </Col>
                 <Col span={12}>

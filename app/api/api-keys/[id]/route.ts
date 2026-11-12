@@ -1,0 +1,69 @@
+import { eq } from 'drizzle-orm'
+import { NextResponse } from 'next/server'
+
+import { auth } from '@/auth'
+import { allowedScopesForRole, API_SCOPES, callsPerHourForRole, isApiScope } from '@/lib/api-scopes'
+import { canManageApiKeys, isAdmin } from '@/lib/auth-utils'
+import { apiKeys, db, oauthGrants, users } from '@/lib/db'
+import { CONNECTION_DAYS } from '@/lib/oauth'
+
+type Ctx = { params: Promise<{ id: string }> }
+
+/** The key's owner or an admin; null when not allowed or not found. */
+async function ownedKey(id: string) {
+  const session = await auth()
+  if (!session?.user?.id) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  const role = ((session.user as { role?: string }).role ?? '').toLowerCase()
+  if (!canManageApiKeys(role)) return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  const [row] = await db.select({ id: apiKeys.id, userId: apiKeys.userId, ownerRole: users.role }).from(apiKeys).innerJoin(users, eq(apiKeys.userId, users.id)).where(eq(apiKeys.id, id)).limit(1)
+  if (!row) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+  if (row.userId !== session.user.id && !isAdmin(role)) return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  return { id: row.id, ownerRole: row.ownerRole }
+}
+
+/** PATCH /api/api-keys/[id] { is_active?, name?, scopes?, rate_limit_per_hour?, extend? } - turn a connection off or on, rename it, change what it may do or how many calls it may make per hour, or extend it (extend: true makes it last 30 days from now). The key itself stays the same. */
+export async function PATCH(request: Request, ctx: Ctx) {
+  const k = await ownedKey((await ctx.params).id)
+  if (k.error) return k.error
+  const body = (await request.json().catch(() => ({}))) as { is_active?: unknown; name?: unknown; scopes?: unknown; rate_limit_per_hour?: unknown; extend?: unknown }
+  const set: Partial<typeof apiKeys.$inferInsert> = {}
+  if (body.is_active !== undefined) set.isActive = Boolean(body.is_active)
+  if (body.name !== undefined) {
+    const n = String(body.name).trim().slice(0, 120)
+    if (!n) return NextResponse.json({ error: 'Give the key a name' }, { status: 400 })
+    set.name = n
+  }
+  if (body.scopes !== undefined) {
+    const scopes = [...new Set((Array.isArray(body.scopes) ? body.scopes : []).filter(isApiScope))]
+    if (scopes.length === 0) return NextResponse.json({ error: 'Choose at least one access' }, { status: 400 })
+    // Never more than the owner's role allows, whoever edits (an admin editing an agent's connection included).
+    const beyond = scopes.filter((s) => !allowedScopesForRole(k.ownerRole).includes(s))
+    if (beyond.length > 0) return NextResponse.json({ error: `The role of the owner cannot have: ${beyond.map((key) => API_SCOPES.find((s) => s.key === key)?.label ?? key).join(', ')}` }, { status: 400 })
+    set.scopes = scopes
+  }
+  if (body.rate_limit_per_hour !== undefined) {
+    const n = Number(body.rate_limit_per_hour)
+    const roleMax = callsPerHourForRole(k.ownerRole)
+    if (!Number.isInteger(n) || n < 10 || n > roleMax) return NextResponse.json({ error: `The limit must be a whole number from 10 to ${roleMax} calls per hour (the most this role may use)` }, { status: 400 })
+    set.rateLimitPerHour = n
+  }
+  let extendedTo: Date | null = null
+  if (body.extend === true) {
+    // Lasts CONNECTION_DAYS from today, whatever was left. An expired connection comes back to life with the same token.
+    extendedTo = new Date(Date.now() + CONNECTION_DAYS * 86400000)
+    set.expiresAt = extendedTo
+  }
+  if (Object.keys(set).length === 0) return NextResponse.json({ ok: true })
+  await db.update(apiKeys).set(set).where(eq(apiKeys.id, k.id))
+  // An app that connected through OAuth renews its token against the connection's own end date, so that moves too.
+  if (extendedTo) await db.update(oauthGrants).set({ refreshExpiresAt: extendedTo }).where(eq(oauthGrants.keyId, k.id))
+  return NextResponse.json({ ok: true, ...(extendedTo ? { expires_at: extendedTo.toISOString() } : {}) })
+}
+
+/** DELETE /api/api-keys/[id] - removes the key for good; anything using it stops working. */
+export async function DELETE(_request: Request, ctx: Ctx) {
+  const k = await ownedKey((await ctx.params).id)
+  if (k.error) return k.error
+  await db.delete(apiKeys).where(eq(apiKeys.id, k.id))
+  return NextResponse.json({ ok: true })
+}

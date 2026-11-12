@@ -8,7 +8,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const role = ((session.user as { role?: string }).role ?? '').toLowerCase()
-  if (!['admin', 'manager', 'staff'].includes(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!['admin', 'operations', 'manager', 'staff'].includes(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   return NextResponse.json({ skills: await getUserSkillLevels((await params).id) })
 }
 
@@ -16,7 +16,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (((session.user as { role?: string }).role ?? '').toLowerCase() !== 'admin') {
+  if (!['admin', 'operations'].includes(((session.user as { role?: string }).role ?? '').toLowerCase())) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   const body = (await request.json().catch(() => ({}))) as { skills?: { skill_id?: unknown; level?: unknown }[] }
@@ -26,6 +26,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     .filter((s) => valid.has(String(s.skill_id)))
     .map((s) => ({ skillId: String(s.skill_id), level: s.level }))
   const userId = (await params).id
-  await setUserSkills(userId, items)
+  await setUserSkills(userId, items, session.user.id)
   return NextResponse.json({ skills: await getUserSkillLevels(userId) })
 }

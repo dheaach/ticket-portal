@@ -15,10 +15,12 @@ import TicketsListView from '@/components/ticket/list/TicketsListView'
 import TicketsRoundRobinView from '@/components/ticket/list/TicketsRoundRobinView'
 import { useTicketsData } from '@/components/ticket/list/useTicketsData'
 import { canDeleteTickets, isAdmin } from '@/lib/auth-utils'
-import { addSavedTicketFilterPreset } from '@/lib/ticket-saved-filters'
+import { addSavedTicketFilterPreset, refreshSavedTicketFilterPresets } from '@/lib/ticket-saved-filters'
 
 interface TicketsContentProps {
   user: { id: string; email?: string | null; name?: string | null; role?: string }
+  /** My Tickets: only the tickets assigned to the signed-in person. */
+  mineOnly?: boolean
 }
 
 const TICKET_ERROR_MESSAGES: Record<string, string> = {
@@ -27,7 +29,7 @@ const TICKET_ERROR_MESSAGES: Record<string, string> = {
   invalid: 'That ticket link is not valid.',
 }
 
-export default function TicketsContent({ user: currentUser }: TicketsContentProps) {
+export default function TicketsContent({ user: currentUser, mineOnly = false }: TicketsContentProps) {
   const searchParams = useSearchParams()
   const router = useRouter()
   const ticketErrorHandledRef = useRef<string | null>(null)
@@ -53,6 +55,23 @@ export default function TicketsContent({ user: currentUser }: TicketsContentProp
     const q = next.toString()
     router.replace(q ? `/tickets?${q}` : '/tickets', { scroll: false })
   }, [searchParams, router])
+
+  // The default view opens once per browser tab, and only when /tickets is opened without filters of its own.
+  useEffect(() => {
+    if (mineOnly || searchParams.toString()) return
+    try {
+      if (sessionStorage.getItem('deskteam-default-ticket-view-applied') === '1') return
+      sessionStorage.setItem('deskteam-default-ticket-view-applied', '1')
+    } catch {
+      return
+    }
+    void refreshSavedTicketFilterPresets(currentUser.id).then((list) => {
+      const def = list.find((p) => p.isDefault)
+      if (def?.query) router.replace(`/tickets?${def.query}`, { scroll: false })
+    })
+    // Runs once when the page opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const isCustomer = ((currentUser as { role?: string }).role ?? '').toLowerCase() === 'customer'
   const canDeleteTicket = canDeleteTickets(currentUser.role)
@@ -135,7 +154,7 @@ export default function TicketsContent({ user: currentUser }: TicketsContentProp
     ticketsPageLimit,
     setTicketsPageLimit,
     refetchTickets,
-  } = useTicketsData(currentUser.id, isCustomer, canDeleteTicket)
+  } = useTicketsData(currentUser.id, isCustomer, canDeleteTicket, mineOnly)
 
   const handleCloseTicket = async (id: number) => {
     try {
@@ -186,6 +205,7 @@ export default function TicketsContent({ user: currentUser }: TicketsContentProp
             ticketsPageLimit={ticketsPageLimit}
             onTicketsPageLimitChange={setTicketsPageLimit}
             onRefresh={refetchTickets}
+            mineOnly={mineOnly}
           />
 
           {!isCustomer && filterTicketType === 'spam' && (
@@ -283,6 +303,7 @@ export default function TicketsContent({ user: currentUser }: TicketsContentProp
         </div>
       </AdminMainColumn>
 
+      {!mineOnly ? (
       <FilterSidebar
         collapsed={filterSidebarCollapsed}
         onCollapsedChange={setFilterSidebarCollapsed}
@@ -314,6 +335,7 @@ export default function TicketsContent({ user: currentUser }: TicketsContentProp
         isCustomer={isCustomer}
         onSaveViewPreset={(name) => addSavedTicketFilterPreset(currentUser.id, name, getFilterQueryString())}
       />
+      ) : null}
 
       <TicketFormModal
         open={modalVisible}

@@ -2,7 +2,6 @@
 
 import { AppstoreOutlined, IdcardOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, TeamOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { Button, ConfigProvider, Flex, Input, Popover, Segmented, Select, Space, Switch, theme, Tooltip, Typography } from 'antd'
-import { useState } from 'react'
 
 import { TICKETS_PAGE_LIMIT_OPTIONS, type TicketsPageLimit } from '@/lib/tickets-list-query'
 
@@ -23,6 +22,8 @@ interface TicketsHeaderProps {
   ticketsPageLimit?: TicketsPageLimit
   onTicketsPageLimitChange?: (v: TicketsPageLimit) => void
   onRefresh?: () => void
+  /** My Tickets page: the title says so. Everyone else sees All Tickets (customers keep My Tickets). */
+  mineOnly?: boolean
 }
 
 const SEARCH_FIELD_OPTIONS = [
@@ -46,11 +47,11 @@ export default function TicketsHeader({
   ticketsPageLimit = 50,
   onTicketsPageLimitChange,
   onRefresh,
+  mineOnly = false,
 }: TicketsHeaderProps) {
   const { token } = theme.useToken()
   const searchPending = loading && !!filterSearch.trim()
   const [prefOpen, setPrefOpen] = useState(false)
-
   const fieldsSet = new Set(searchFields.split(',').map((s) => s.trim()).filter(Boolean))
 
   function handleViewModeChange(v: ViewMode) {
@@ -94,7 +95,7 @@ export default function TicketsHeader({
       )}
       <Flex vertical gap={12} style={{ padding: 24 }}>
         <Typography.Title level={2} style={{ margin: 0 }}>
-          {junkTitle ?? 'My Tickets'}
+          {junkTitle ?? (mineOnly || isCustomer ? 'My Tickets' : 'All Tickets')}
         </Typography.Title>
 
         {!inJunkFolder && (
@@ -166,9 +167,11 @@ export default function TicketsHeader({
                 </Tooltip>
               )}
             </Flex>
-            <Button type="primary" icon={<PlusOutlined />} onClick={onCreateClick} loading={loading}>
-              Add Ticket
-            </Button>
+            <Flex gap={8}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={onCreateClick} loading={loading}>
+                Add Ticket
+              </Button>
+            </Flex>
           </Flex>
         )}
 

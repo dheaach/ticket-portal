@@ -25,10 +25,12 @@ import {
   TabUsers,
   TabWebsites,
 } from '@/components/company'
+import TabCompanyPics from '@/components/company/TabCompanyPics'
 import TabCompanySkills from '@/components/company/TabCompanySkills'
 import AdminMainColumn from '@/components/layout/AdminMainColumn'
 import AdminSidebar from '@/components/layout/AdminSidebar'
 import CustomerNavbar from '@/components/layout/CustomerNavbar'
+import { FRESHDESK_LIVE_IMPORT_ENABLED } from '@/lib/fd-import-flags'
 
 const { Content } = Layout
 const { Title, Text } = Typography
@@ -80,7 +82,7 @@ export default function CompanyDetailContent({
   currentUserRole,
 }: CompanyDetailContentProps) {
   const router = useRouter()
-  const canEdit = (() => { const r = (currentUserRole ?? '').toLowerCase(); return r === 'admin' || r === 'manager' })()
+  const canEdit = (() => { const r = (currentUserRole ?? '').toLowerCase(); return r === 'admin' || r === 'operations' || r === 'manager' })()
   const [collapsed, setCollapsed] = useState(false)
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
@@ -485,6 +487,11 @@ export default function CompanyDetailContent({
       ? []
       : [
           {
+            key: 'pics',
+            label: 'PIC',
+            children: <TabCompanyPics companyId={companyData.id} canEdit={canEdit} />,
+          },
+          {
             key: 'skills',
             label: 'Skills',
             children: <TabCompanySkills companyId={companyData.id} canEdit={canEdit} />,
@@ -502,6 +509,7 @@ export default function CompanyDetailContent({
           websites={websites}
           loadingWebsites={loadingWebsites}
           getLastCrawlSession={getLastCrawlSession}
+          onChanged={fetchWebsites}
           onAddWebsite={handleWebsiteCreate}
           onEditWebsite={handleWebsiteEdit}
           onDeleteWebsite={handleWebsiteDelete}
@@ -560,7 +568,7 @@ export default function CompanyDetailContent({
                 {companyData.name}
               </Title>
               <Space>
-                {companyData.freshdesk_id && (
+                {FRESHDESK_LIVE_IMPORT_ENABLED && companyData.freshdesk_id && (
                   <Button
                     icon={<SyncOutlined spin={resyncing} />}
                     loading={resyncing}
@@ -659,7 +667,7 @@ export default function CompanyDetailContent({
                     <Row gutter={16}>
                       <Col xs={24} sm={12}>
                         <Form.Item name="active_time" label="Active time" initialValue={0}>
-                          <InputNumber min={0} precision={0} addonAfter="H" style={{ width: '100%' }} />
+                          <InputNumber min={0} max={99999} step={0.1} precision={2} addonAfter="H" style={{ width: "100%" }} />
                         </Form.Item>
                       </Col>
                       {/* <Col xs={24} sm={12}>
